@@ -48,7 +48,7 @@ jobs:
 
   # Second job: Build each platform in parallel
   # OPTIMIZED: Only building amd64 and arm64 for faster builds
-  build:
+  Build-Em-All:
     needs: version
     runs-on: ubuntu-latest
     strategy:
@@ -112,7 +112,7 @@ jobs:
 
   # Third job: Merge all platform images into multi-arch manifest
   merge:
-    needs: [version, build]
+    needs: [version, Build-Em-All]
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
