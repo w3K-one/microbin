@@ -1,0 +1,139 @@
+name: Docker Multi-Platform Build, Push & Release
+
+on:
+  # Trigger on pushes to main/master branch
+  # Customize the 'paths' section to match your project structure
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - '**'  # Change this to specific paths like 'src/**' or 'myapp/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+
+  # Allow manual workflow runs from Actions tab
+  workflow_dispatch:
+
+# Environment variables - CUSTOMIZE THESE FOR YOUR PROJECT
+env:
+  # Change to your Docker Hub username/image name
+  DOCKER_IMAGE_NAME: your-dockerhub-username/your-image-name
+  # Path to your Dockerfile (relative to repo root)
+  DOCKERFILE_PATH: ./Dockerfile
+  # Docker build context (usually '.' for repo root)
+  BUILD_CONTEXT: .
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for version tagging
+
+      - name: Determine Version Tag
+        id: get_version
+        run: |
+          # Get the most recent commit message
+          LATEST_COMMIT_MSG=$(git log -1 --pretty=%B)
+
+          # 1. Try to extract version from commit message (e.g., "v1.2.3 Fix bug")
+          COMMIT_MSG_VERSION=$(echo "$LATEST_COMMIT_MSG" | grep -oP '^v[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
+
+          if [[ -n "$COMMIT_MSG_VERSION" ]]; then
+            echo "✓ Found version in commit message: $COMMIT_MSG_VERSION"
+            echo "TAG=$COMMIT_MSG_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          echo "No version in commit message. Checking for existing Git tags..."
+          
+          # 2. If no version in commit, get the latest git tag and increment it
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          
+          if [[ -n "$LATEST_TAG" ]]; then
+            echo "✓ Found latest tag: $LATEST_TAG"
+            # Increment the patch version (e.g., v1.2.3 -> v1.2.4 or v1.2 -> v1.3)
+            NEW_TAG=$(echo "$LATEST_TAG" | awk -F. -v OFS=. '{$NF = $NF + 1;} 1')
+            echo "✓ Incremented to: $NEW_TAG"
+            echo "TAG=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          else
+            # 3. No tags exist - use date-based version
+            DATE_TAG="v$(date -u +'%y.%m.%d-%H%M')"
+            echo "✓ No tags found. Using date-based tag: $DATE_TAG"
+            echo "TAG=$DATE_TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            # Version tag from previous step
+            type=raw,value=${{ steps.get_version.outputs.TAG }}
+            # Latest tag (only on default branch)
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          # Multi-architecture support - customize platforms as needed
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/386
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache settings for faster builds
+          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Create GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          name: Release ${{ steps.get_version.outputs.TAG }}
+          body: |
+            ## 🐳 Docker Image
+            ```
+            docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.get_version.outputs.TAG }}
+            ```
+            
+            **Supported Platforms:**
+            - linux/amd64
+            - linux/arm64
+            - linux/arm/v7
+            - linux/386
+            
+            ## 📝 Changes
+            ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: false
+
+      - name: Docker Hub Description Update
+        uses: peter-evans/dockerhub-description@v3
+        if: github.event_name != 'pull_request'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKER_IMAGE_NAME }}
+          short-description: ${{ github.event.repository.description }}
+        continue-on-error: true  # Don't fail if README update fails
