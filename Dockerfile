@@ -1,8 +1,4 @@
-# Multi-Architecture Dockerfile for Rust microbin project
-# FIXED: Using debian:bookworm-slim instead of bitnami/minideb
-# Supports: linux/amd64, linux/arm64, linux/arm/v7
-
-FROM rust:latest AS build
+FROM rust:latest as build
 
 WORKDIR /app
 
@@ -13,27 +9,19 @@ RUN \
 
 COPY . .
 
-# Build natively for the target platform
-# Docker Buildx will run this on the correct architecture via QEMU
 RUN \
   CARGO_NET_GIT_FETCH_WITH_CLI=true \
   cargo build --release
 
-# Use debian:bookworm-slim instead of bitnami/minideb
-# debian:bookworm-slim supports: linux/amd64, linux/arm64, linux/arm/v7, linux/386
-FROM debian:bookworm-slim
+# https://hub.docker.com/r/bitnami/minideb
+FROM bitnami/minideb:latest
 
 # microbin will be in /app
 WORKDIR /app
 
-# Install minimal required packages
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ca-certificates \
-    tzdata && \
-    rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /usr/share/zoneinfo
 
-# Copy time zone info
+# copy time zone info
 COPY --from=build \
   /usr/share/zoneinfo \
   /usr/share/
@@ -42,7 +30,7 @@ COPY --from=build \
   /etc/ssl/certs/ca-certificates.crt \
   /etc/ssl/certs/ca-certificates.crt
 
-# Copy built executable
+# copy built executable
 COPY --from=build \
   /app/target/release/microbin \
   /usr/bin/microbin

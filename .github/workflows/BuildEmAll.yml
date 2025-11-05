@@ -1,21 +1,22 @@
-name: Fast Multi-Platform Build (Parallel - Essential Platforms)
+name: Docker Multi-Platform Build, Push & Release
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "master", "main" ]
     paths:
       - 'src/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Dockerfile'
       - '.dockerignore'
+
   workflow_dispatch:
 
 env:
   DOCKER_IMAGE_NAME: w3kllc/microbin
 
 jobs:
-  # First job: Determine version tag
+  # Determine version tag
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -29,25 +30,38 @@ jobs:
       - name: Determine Version Tag
         id: get_version
         run: |
+          # Get the most recent commit message reliably
           LATEST_COMMIT_MSG=$(git log -1 --pretty=%B)
+
+          # 1. Try to get version from commit message (e.g., "v1.2.3 Something something")
+          # The '|| true' ensures that if grep finds nothing, it doesn't cause the script to exit with an error.
           COMMIT_MSG_VERSION=$(echo "$LATEST_COMMIT_MSG" | grep -oP '^v[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
 
           if [[ -n "$COMMIT_MSG_VERSION" ]]; then
+            echo "Found version in commit message: $COMMIT_MSG_VERSION"
             echo "TAG=$COMMIT_MSG_VERSION" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          echo "No version found in commit message. Checking for existing Git tags."
+          
+          # 2. If no version in commit, get the latest git tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
+          
           if [[ -n "$LATEST_TAG" ]]; then
+            echo "Found latest tag: $LATEST_TAG"
+            # Increment the patch version of the tag (e.g., v1.2.3 -> v1.2.4 or v1.2 -> v1.3)
             NEW_TAG=$(echo "$LATEST_TAG" | awk -F. -v OFS=. '{$NF = $NF + 1;} 1')
+            echo "Incremented tag to: $NEW_TAG"
             echo "TAG=$NEW_TAG" >> "$GITHUB_OUTPUT"
           else
+            # 3. If no tags exist, use a date-based version
             DATE_TAG="v$(date -u +'%y.%m.%d-%H%M')"
+            echo "No tags found. Using date-based tag: $DATE_TAG"
             echo "TAG=$DATE_TAG" >> "$GITHUB_OUTPUT"
           fi
 
-  # Second job: Build each platform in parallel
-  # OPTIMIZED: Only building amd64 and arm64 for faster builds
+  # Build each platform in parallel
   Build-Em-All:
     needs: version
     runs-on: ubuntu-latest
@@ -57,8 +71,6 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
-          # linux/arm/v7 removed for 2x faster builds
-          # (ARMv7 support for Raspberry Pi 2/3 is rarely needed)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -78,7 +90,6 @@ jobs:
       - name: Extract platform pair
         id: platform
         run: |
-          # Convert linux/amd64 to linux-amd64 for tags
           PLATFORM_PAIR="${{ matrix.platform }}"
           PLATFORM_TAG="${PLATFORM_PAIR//\//-}"
           echo "tag=${PLATFORM_TAG}" >> "$GITHUB_OUTPUT"
@@ -90,10 +101,8 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
-          # Use build cache for faster builds
           cache-from: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }}
           cache-to: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
-          # Push by digest for combining later
           outputs: type=image,name=${{ env.DOCKER_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -110,7 +119,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Third job: Merge all platform images into multi-arch manifest
+  # Merge platform images into multi-arch manifest
   merge:
     needs: [version, Build-Em-All]
     runs-on: ubuntu-latest
@@ -143,7 +152,7 @@ jobs:
         run: |
           docker buildx imagetools inspect ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.version.outputs.tag }}
 
-  # Fourth job: Create GitHub release
+  # Create GitHub release
   release:
     needs: [version, merge]
     runs-on: ubuntu-latest
@@ -163,12 +172,9 @@ jobs:
             docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.version.outputs.tag }}
             ```
             
-            **Supported Platforms (Essential):**
-            - `linux/amd64` - Intel/AMD 64-bit (Desktop, Servers, Cloud)
+            **Supported Platforms:**
+            - `linux/amd64` - Intel/AMD 64-bit
             - `linux/arm64` - ARM 64-bit (Raspberry Pi 4+, Apple Silicon, AWS Graviton)
-            
-            **Optimized for speed:** ARMv7 removed for 2x faster build times.
-            This covers 99% of users. If you need ARMv7 support, please open an issue.
             
             ## 🚀 Quick Start
             ```bash
@@ -186,5 +192,5 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ env.DOCKER_IMAGE_NAME }}
-          short-description: ${{ github.event.repository.description }}
+          readme-filepath: ./DOCKER.md
         continue-on-error: true
