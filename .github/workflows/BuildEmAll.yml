@@ -15,7 +15,6 @@ env:
   DOCKER_IMAGE_NAME: w3kllc/microbin
 
 jobs:
-  Build-Em-All:
   # First job: Determine version tag
   version:
     runs-on: ubuntu-latest
