@@ -4,11 +4,9 @@ use actix_web::{get, post, web, Error, HttpResponse};
 use crate::args::ARGS;
 use crate::endpoints::errors::ErrorTemplate;
 use crate::pasta::PastaFile;
-use crate::util::animalnumbers::to_u64;
 use crate::util::auth;
 use crate::util::db::delete;
-use crate::util::hashids::to_u64 as hashid_to_u64;
-use crate::util::misc::{decrypt, remove_expired};
+use crate::util::misc::{decrypt, find_pasta_by_slug, remove_expired};
 use crate::AppState;
 use askama::Template;
 use std::fs;
@@ -17,14 +15,11 @@ use std::fs;
 pub async fn remove(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse {
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
+    if let Some(i) = find_pasta_by_slug(&pastas, &slug) {
+        let pasta = &pastas[i];
+        {
             // if it's encrypted or read-only, it needs password to be deleted
             if pasta.encrypt_server || pasta.readonly {
                 return HttpResponse::Found()
@@ -61,9 +56,10 @@ pub async fn remove(data: web::Data<AppState>, id: web::Path<String>) -> HttpRes
             }
 
             // remove it from in-memory pasta list
+            let pasta_id = pastas[i].id;
             pastas.remove(i);
 
-            delete(Some(&pastas), Some(id));
+            delete(Some(&pastas), Some(pasta_id));
 
             return HttpResponse::Found()
                 .append_header(("Location", format!("{}/list", ARGS.public_path_as_str())))
@@ -84,11 +80,7 @@ pub async fn post_remove(
     id: web::Path<String>,
     payload: Multipart,
 ) -> Result<HttpResponse, Error> {
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     let mut pastas = data.pastas.lock().unwrap();
 
@@ -96,8 +88,9 @@ pub async fn post_remove(
 
     let password = auth::password_from_multipart(payload).await?;
 
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
+    if let Some(i) = find_pasta_by_slug(&pastas, &slug) {
+        let pasta = &pastas[i];
+        {
             if pastas[i].readonly || pastas[i].encrypt_server {
                 if password != *"" {
                     let res = decrypt(pastas[i].content.to_owned().as_str(), &password);
@@ -128,9 +121,10 @@ pub async fn post_remove(
                         }
 
                         // remove it from in-memory pasta list
+                        let pasta_id = pastas[i].id;
                         pastas.remove(i);
 
-                        delete(Some(&pastas), Some(id));
+                        delete(Some(&pastas), Some(pasta_id));
 
                         return Ok(HttpResponse::Found()
                             .append_header((

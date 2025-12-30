@@ -105,6 +105,7 @@ pub async fn create(
         last_read: timenow,
         pasta_type: String::from(""),
         expiration: expiration_to_timestamp(&ARGS.default_expiry, timenow),
+        custom_url: None,
     };
 
     let mut random_key: String = String::from("");
@@ -214,6 +215,24 @@ pub async fn create(
                 }
                 continue;
             }
+            "custom_url" => {
+                let mut custom_url_input = String::from("");
+                while let Some(chunk) = field.try_next().await? {
+                    custom_url_input.push_str(std::str::from_utf8(&chunk).unwrap().to_string().as_str());
+                }
+                // Validate and sanitize custom URL
+                let custom_url_trimmed = custom_url_input.trim();
+                if !custom_url_trimmed.is_empty() {
+                    // Only allow alphanumeric, hyphens, and underscores
+                    if custom_url_trimmed.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                        && custom_url_trimmed.len() <= 100 {
+                        new_pasta.custom_url = Some(custom_url_trimmed.to_string());
+                    } else {
+                        log::warn!("Invalid custom URL format: {}", custom_url_trimmed);
+                    }
+                }
+                continue;
+            }
             "file" => {
                 if ARGS.no_file_upload {
                     continue;
@@ -311,6 +330,31 @@ pub async fn create(
 
     let encrypt_server = new_pasta.encrypt_server;
 
+    // Check if custom URL conflicts with existing pastas
+    if let Some(ref custom_url) = new_pasta.custom_url {
+        for pasta in pastas.iter() {
+            // Check against other custom URLs
+            if let Some(ref existing_custom_url) = pasta.custom_url {
+                if existing_custom_url == custom_url {
+                    return Ok(HttpResponse::Found()
+                        .append_header(("Location", "/url-already-exists"))
+                        .finish());
+                }
+            }
+            // Check against generated slugs to avoid conflicts
+            let existing_slug = if ARGS.hash_ids {
+                to_hashids(pasta.id)
+            } else {
+                to_animal_names(pasta.id)
+            };
+            if &existing_slug == custom_url {
+                return Ok(HttpResponse::Found()
+                    .append_header(("Location", "/url-already-exists"))
+                    .finish());
+            }
+        }
+    }
+
     pastas.push(new_pasta);
 
     for (_, pasta) in pastas.iter().enumerate() {
@@ -319,11 +363,18 @@ pub async fn create(
         }
     }
 
-    let slug = if ARGS.hash_ids {
-        to_hashids(id)
-    } else {
-        to_animal_names(id)
-    };
+    // Use custom URL if provided, otherwise generate slug
+    let slug = pastas
+        .iter()
+        .find(|p| p.id == id)
+        .and_then(|p| p.custom_url.clone())
+        .unwrap_or_else(|| {
+            if ARGS.hash_ids {
+                to_hashids(id)
+            } else {
+                to_animal_names(id)
+            }
+        });
 
     if encrypt_server {
         Ok(HttpResponse::Found()

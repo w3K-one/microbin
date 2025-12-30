@@ -9,7 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::Pasta;
 
+use super::animalnumbers::to_u64;
 use super::db::delete;
+use super::hashids::to_u64 as hashid_to_u64;
 
 pub fn remove_expired(pastas: &mut Vec<Pasta>) {
     // get current time - this will be needed to check which pastas have expired
@@ -147,4 +149,32 @@ pub fn decrypt_file(
     }
 
     Ok(res.unwrap())
+}
+
+/// Find a pasta by slug (either custom URL or generated ID)
+/// Returns the index of the pasta if found, None otherwise
+pub fn find_pasta_by_slug(pastas: &[Pasta], slug: &str) -> Option<usize> {
+    // Try to find by custom URL first
+    for (i, pasta) in pastas.iter().enumerate() {
+        if let Some(ref custom_url) = pasta.custom_url {
+            if custom_url == slug {
+                return Some(i);
+            }
+        }
+    }
+
+    // If not found by custom URL, try by generated ID
+    let id = if ARGS.hash_ids {
+        hashid_to_u64(slug).unwrap_or(0)
+    } else {
+        to_u64(slug).unwrap_or(0)
+    };
+
+    for (i, pasta) in pastas.iter().enumerate() {
+        if pasta.id == id {
+            return Some(i);
+        }
+    }
+
+    None
 }

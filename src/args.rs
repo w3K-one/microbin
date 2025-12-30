@@ -94,16 +94,16 @@ pub struct Args {
     #[clap(long, env = "MICROBIN_WIDE")]
     pub wide: bool,
 
-    #[clap(long, env = "MICROBIN_QR")]
+    #[clap(long, env = "MICROBIN_QR", default_value_t = true)]
     pub qr: bool,
 
-    #[clap(long, env = "MICROBIN_ETERNAL_PASTA")]
+    #[clap(long, env = "MICROBIN_ETERNAL_PASTA", default_value_t = true)]
     pub eternal_pasta: bool,
 
     #[clap(long, env = "MICROBIN_ENABLE_READONLY")]
     pub enable_readonly: bool,
 
-    #[clap(long, env = "MICROBIN_DEFAULT_EXPIRY", default_value = "24hour")]
+    #[clap(long, env = "MICROBIN_DEFAULT_EXPIRY", default_value = "never")]
     pub default_expiry: String,
 
     #[clap(long, env = "MICROBIN_DATA_DIR", default_value = "microbin_data")]
@@ -115,13 +115,13 @@ pub struct Args {
     #[clap(long, env = "MICROBIN_CUSTOM_CSS")]
     pub custom_css: Option<String>,
 
-    #[clap(long, env = "MICROBIN_HASH_IDS")]
+    #[clap(long, env = "MICROBIN_HASH_IDS", default_value_t = true)]
     pub hash_ids: bool,
 
     #[clap(long, env = "MICROBIN_LIST_SERVER")]
     pub list_server: bool,
 
-    #[clap(long, env = "MICROBIN_DISABLE_TELEMETRY")]
+    #[clap(long, env = "MICROBIN_DISABLE_TELEMETRY", default_value_t = true)]
     pub disable_telemetry: bool,
 
     #[clap(long, env = "MICROBIN_DISABLE_UPDATE_CHECKING")]

@@ -9,7 +9,7 @@ struct AuthAdmin<'a> {
     status: String,
 }
 
-#[get("/auth_admin")]
+#[get("/@/auth")]
 pub async fn auth_admin() -> HttpResponse {
     return HttpResponse::Ok().content_type("text/html").body(
         AuthAdmin {
@@ -21,7 +21,7 @@ pub async fn auth_admin() -> HttpResponse {
     );
 }
 
-#[get("/auth_admin/{status}")]
+#[get("/@/auth/{status}")]
 pub async fn auth_admin_with_status(param: web::Path<String>) -> HttpResponse {
     let status = param.into_inner();
 

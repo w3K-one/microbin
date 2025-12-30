@@ -1,11 +1,9 @@
 use crate::args::{Args, ARGS};
 use crate::endpoints::errors::ErrorTemplate;
 use crate::pasta::Pasta;
-use crate::util::animalnumbers::to_u64;
 use crate::util::auth;
 use crate::util::db::update;
-use crate::util::hashids::to_u64 as hashid_to_u64;
-use crate::util::misc::remove_expired;
+use crate::util::misc::{find_pasta_by_slug, remove_expired};
 use crate::AppState;
 use actix_multipart::Multipart;
 use actix_web::{get, post, web, Error, HttpResponse};
@@ -28,27 +26,13 @@ fn pastaresponse(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
         if pastas[index].encrypt_server && password == *"" {
             return HttpResponse::Found()
                 .append_header((
@@ -155,28 +139,13 @@ fn urlresponse(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
         // increment read count
         pastas[index].read_count += 1;
 
@@ -237,27 +206,13 @@ pub async fn getrawpasta(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
         if pastas[index].encrypt_server {
             return Ok(HttpResponse::Found()
                 .append_header((
@@ -310,27 +265,13 @@ pub async fn postrawpasta(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
         if pastas[index].encrypt_server && password == *"" {
             return Ok(HttpResponse::Found()
                 .append_header((

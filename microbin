@@ -1,0 +1,228 @@
+#!/bin/bash
+
+# =============================================================================
+# MicroBin CLI Upload Script
+# =============================================================================
+# Upload text or files to your MicroBin instance from the command line.
+#
+# Usage:
+#   microbin [options] "content to paste"
+#   <command> | microbin [options]
+#   microbin -f <file> [options]
+#
+# For full help: microbin -h
+# =============================================================================
+
+# --- Configuration ---
+SERVER_URL="${MICROBIN_URL:-https://microbin.cc}"
+UPLOAD_ENDPOINT="${SERVER_URL}/upload"
+
+# --- Defaults ---
+PRIVACY="unlisted"
+EXPIRATION="never"
+PASSWORD=""
+FILE=""
+BURN_AFTER=""
+CUSTOM_URL=""
+COPY_TO_CLIPBOARD=false
+RETURN_RAW=false
+
+# --- Help Function ---
+show_help() {
+    echo "Usage: microbin [options] \"content to paste\""
+    echo "   or: <command> | microbin [options]"
+    echo "   or: microbin -f <file> [options]"
+    echo ""
+    echo "Description:"
+    echo "  Uploads content to ${SERVER_URL} as a new paste."
+    echo ""
+    echo "Options:"
+    echo "  -f <file>  Upload a file instead of text"
+    echo "  -e <val>   Expiration (Default: never)"
+    echo "             Options: 1min, 10min, 1hour, 24hour, 3days, 1week, never"
+    echo "  -p <val>   Privacy level (Default: unlisted)"
+    echo "             Options: public, unlisted, readonly, private, secret"
+    echo "  -P <pass>  Password (required for readonly, private, secret)"
+    echo "  -b <num>   Burn after N reads (0 = no limit)"
+    echo "  -u <url>   Custom URL slug (alphanumeric, hyphens, underscores only)"
+    echo "  -c         Copy URL to clipboard"
+    echo "  -r         Return raw paste URL instead of view URL"
+    echo "  -h         Show this help"
+    echo ""
+    echo "Environment Variables:"
+    echo "  MICROBIN_URL   Override server URL (Default: https://microbin.cc)"
+    echo ""
+    echo "Examples:"
+    echo "  microbin \"Hello world\""
+    echo "  echo \"Hello\" | microbin"
+    echo "  microbin -f document.pdf -e 1week"
+    echo "  microbin -u my-custom-url \"Custom paste\""
+    echo "  cat log.txt | microbin -p private -P mypass -c"
+    echo "  curl -s https://example.com | microbin -r"
+}
+
+# --- Validation Function ---
+validate_option() {
+    local value="$1"
+    shift
+    local valid_options=("$@")
+    
+    for option in "${valid_options[@]}"; do
+        if [ "$value" = "$option" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# --- Parse Options (Flags) ---
+while getopts "h?e:p:P:f:b:u:cr" opt; do
+    case "$opt" in
+    h|\?)
+        show_help
+        exit 0
+        ;;
+    e)  EXPIRATION="$OPTARG"
+        ;;
+    p)  PRIVACY="$OPTARG"
+        ;;
+    P)  PASSWORD="$OPTARG"
+        ;;
+    f)  FILE="$OPTARG"
+        ;;
+    b)  BURN_AFTER="$OPTARG"
+        ;;
+    u)  CUSTOM_URL="$OPTARG"
+        ;;
+    c)  COPY_TO_CLIPBOARD=true
+        ;;
+    r)  RETURN_RAW=true
+        ;;
+    esac
+done
+
+# Remove processed options from argument list
+shift $((OPTIND-1))
+
+# --- Validate Options ---
+if ! validate_option "$EXPIRATION" "1min" "10min" "1hour" "24hour" "3days" "1week" "never"; then
+    echo "Error: Invalid expiration value '$EXPIRATION'" >&2
+    echo "Valid options: 1min, 10min, 1hour, 24hour, 3days, 1week, never" >&2
+    exit 1
+fi
+
+if ! validate_option "$PRIVACY" "public" "unlisted" "readonly" "private" "secret"; then
+    echo "Error: Invalid privacy value '$PRIVACY'" >&2
+    echo "Valid options: public, unlisted, readonly, private, secret" >&2
+    exit 1
+fi
+
+# Validate burn_after if provided
+if [ -n "$BURN_AFTER" ] && ! [[ "$BURN_AFTER" =~ ^[0-9]+$ ]]; then
+    echo "Error: Burn after value must be a number" >&2
+    exit 1
+fi
+
+# Validate custom URL if provided
+if [ -n "$CUSTOM_URL" ]; then
+    if ! [[ "$CUSTOM_URL" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: Custom URL must contain only alphanumeric characters, hyphens, and underscores" >&2
+        exit 1
+    fi
+    if [ ${#CUSTOM_URL} -gt 100 ]; then
+        echo "Error: Custom URL must be 100 characters or less" >&2
+        exit 1
+    fi
+fi
+
+# --- Build curl Command ---
+declare -a CURL_ARGS
+CURL_ARGS+=(-X POST -L -s -w '%{url_effective}\n' -o /dev/null)
+CURL_ARGS+=(-F "privacy=$PRIVACY")
+CURL_ARGS+=(-F "expiration=$EXPIRATION")
+
+# Add optional parameters
+if [ -n "$PASSWORD" ]; then
+    CURL_ARGS+=(-F "password_field=$PASSWORD")
+fi
+
+if [ -n "$BURN_AFTER" ]; then
+    CURL_ARGS+=(-F "burn_after=$BURN_AFTER")
+fi
+
+if [ -n "$CUSTOM_URL" ]; then
+    CURL_ARGS+=(-F "custom_url=$CUSTOM_URL")
+fi
+
+# --- Detect Mode and Execute ---
+
+# Mode 1: File Upload
+if [ -n "$FILE" ]; then
+    if [ ! -f "$FILE" ]; then
+        echo "Error: File '$FILE' not found." >&2
+        exit 1
+    fi
+    CURL_ARGS+=(-F "file=@$FILE")
+    RESULT=$(curl "${CURL_ARGS[@]}" "$UPLOAD_ENDPOINT" 2>&1)
+    EXIT_CODE=$?
+
+# Mode 2: Piped Data
+elif [ ! -t 0 ]; then
+    CURL_ARGS+=(-F "content=<-")
+    RESULT=$(curl "${CURL_ARGS[@]}" "$UPLOAD_ENDPOINT" 2>&1)
+    EXIT_CODE=$?
+
+# Mode 3: Argument Data
+elif [ $# -gt 0 ]; then
+    CONTENT="$*"
+    CURL_ARGS+=(-F "content=$CONTENT")
+    RESULT=$(curl "${CURL_ARGS[@]}" "$UPLOAD_ENDPOINT" 2>&1)
+    EXIT_CODE=$?
+
+# Mode 4: No Input
+else
+    echo "Error: No content provided." >&2
+    echo "" >&2
+    show_help >&2
+    exit 1
+fi
+
+# --- Handle curl Errors ---
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "Error: Upload failed (exit code: $EXIT_CODE)" >&2
+    echo "$RESULT" >&2
+    exit 1
+fi
+
+# --- Process Result URL ---
+# Check for error conditions first
+if echo "$RESULT" | grep -q "/url-already-exists"; then
+    echo "Error: Custom URL '$CUSTOM_URL' already exists. Please choose a different one." >&2
+    exit 1
+fi
+
+# Convert to raw URL if requested
+if [ $RETURN_RAW = true ]; then
+    RESULT=$(echo "$RESULT" | sed 's|/upload/|/raw/|')
+fi
+
+# --- Output Result ---
+echo "$RESULT"
+
+# --- Copy to Clipboard (Optional) ---
+if [ $COPY_TO_CLIPBOARD = true ]; then
+    if command -v xclip &> /dev/null; then
+        echo -n "$RESULT" | xclip -selection clipboard
+        echo "(URL copied to clipboard)" >&2
+    elif command -v pbcopy &> /dev/null; then
+        echo -n "$RESULT" | pbcopy
+        echo "(URL copied to clipboard)" >&2
+    elif command -v wl-copy &> /dev/null; then
+        echo -n "$RESULT" | wl-copy
+        echo "(URL copied to clipboard)" >&2
+    else
+        echo "Warning: No clipboard tool found (xclip, pbcopy, or wl-copy)" >&2
+    fi
+fi
+
+exit 0

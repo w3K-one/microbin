@@ -19,14 +19,14 @@ struct AdminTemplate<'a> {
     update: &'a Option<Version>,
 }
 
-#[get("/admin")]
+#[get("/@")]
 pub async fn get_admin() -> Result<HttpResponse, Error> {
     return Ok(HttpResponse::Found()
-        .append_header(("Location", "/auth_admin"))
+        .append_header(("Location", "/@/auth"))
         .finish());
 }
 
-#[post("/admin")]
+#[post("/@")]
 pub async fn post_admin(
     data: web::Data<AppState>,
     mut payload: Multipart,
@@ -48,7 +48,7 @@ pub async fn post_admin(
 
     if username != ARGS.auth_admin_username || password != ARGS.auth_admin_password {
         return Ok(HttpResponse::Found()
-            .append_header(("Location", "/auth_admin/incorrect"))
+            .append_header(("Location", "/@/auth/incorrect"))
             .finish());
     }
 

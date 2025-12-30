@@ -1,9 +1,7 @@
 use crate::args::Args;
 use crate::endpoints::errors::ErrorTemplate;
-use crate::util::animalnumbers::to_u64;
 use crate::util::db::update;
-use crate::util::hashids::to_u64 as hashid_to_u64;
-use crate::util::misc::{decrypt, encrypt, remove_expired};
+use crate::util::misc::{decrypt, encrypt, find_pasta_by_slug, remove_expired};
 use crate::{AppState, Pasta, ARGS};
 use actix_multipart::Multipart;
 use actix_web::{get, post, web, Error, HttpResponse};
@@ -23,42 +21,38 @@ struct EditTemplate<'a> {
 pub async fn get_edit(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse {
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     remove_expired(&mut pastas);
 
-    for pasta in pastas.iter() {
-        if pasta.id == id {
-            if !pasta.editable {
-                return HttpResponse::Found()
-                    .append_header(("Location", format!("{}/", ARGS.public_path_as_str())))
-                    .finish();
-            }
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+        let pasta = &pastas[index];
 
-            if pasta.encrypt_server {
-                return HttpResponse::Found()
-                    .append_header((
-                        "Location",
-                        format!("/auth_edit_private/{}", pasta.id_as_animals()),
-                    ))
-                    .finish();
-            }
-
-            return HttpResponse::Ok().content_type("text/html").body(
-                EditTemplate {
-                    pasta,
-                    args: &ARGS,
-                    path: &String::from("edit"),
-                    status: &String::from(""),
-                }
-                .render()
-                .unwrap(),
-            );
+        if !pasta.editable {
+            return HttpResponse::Found()
+                .append_header(("Location", format!("{}/", ARGS.public_path_as_str())))
+                .finish();
         }
+
+        if pasta.encrypt_server {
+            return HttpResponse::Found()
+                .append_header((
+                    "Location",
+                    format!("/auth_edit_private/{}", pasta.id_as_animals()),
+                ))
+                .finish();
+        }
+
+        return HttpResponse::Ok().content_type("text/html").body(
+            EditTemplate {
+                pasta,
+                args: &ARGS,
+                path: &String::from("edit"),
+                status: &String::from(""),
+            }
+            .render()
+            .unwrap(),
+        );
     }
 
     HttpResponse::Ok()
@@ -73,44 +67,38 @@ pub async fn get_edit_with_status(
 ) -> HttpResponse {
     let mut pastas = data.pastas.lock().unwrap();
 
-    let (id, status) = param.into_inner();
-
-    let intern_id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id).unwrap_or(0)
-    };
+    let (slug, status) = param.into_inner();
 
     remove_expired(&mut pastas);
 
-    for pasta in pastas.iter() {
-        if pasta.id == intern_id {
-            if !pasta.editable {
-                return HttpResponse::Found()
-                    .append_header(("Location", format!("{}/", ARGS.public_path_as_str())))
-                    .finish();
-            }
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+        let pasta = &pastas[index];
 
-            if pasta.encrypt_server {
-                return HttpResponse::Found()
-                    .append_header((
-                        "Location",
-                        format!("/auth_edit_private/{}", pasta.id_as_animals()),
-                    ))
-                    .finish();
-            }
-
-            return HttpResponse::Ok().content_type("text/html").body(
-                EditTemplate {
-                    pasta,
-                    args: &ARGS,
-                    path: &String::from("edit"),
-                    status: &status,
-                }
-                .render()
-                .unwrap(),
-            );
+        if !pasta.editable {
+            return HttpResponse::Found()
+                .append_header(("Location", format!("{}/", ARGS.public_path_as_str())))
+                .finish();
         }
+
+        if pasta.encrypt_server {
+            return HttpResponse::Found()
+                .append_header((
+                    "Location",
+                    format!("/auth_edit_private/{}", pasta.id_as_animals()),
+                ))
+                .finish();
+        }
+
+        return HttpResponse::Ok().content_type("text/html").body(
+            EditTemplate {
+                pasta,
+                args: &ARGS,
+                path: &String::from("edit"),
+                status: &status,
+            }
+            .render()
+            .unwrap(),
+        );
     }
 
     HttpResponse::Ok()
@@ -127,11 +115,7 @@ pub async fn post_edit_private(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     let mut password = String::from("");
 
@@ -146,18 +130,9 @@ pub async fn post_edit_private(
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found && !pastas[index].encrypt_client {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+        if !pastas[index].encrypt_client {
         let original_content = pastas[index].content.to_owned();
 
         // decrypt content temporarily
@@ -214,11 +189,7 @@ pub async fn post_submit_edit_private(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     let mut password = String::from("");
     let mut new_content = String::from("");
@@ -239,18 +210,9 @@ pub async fn post_submit_edit_private(
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found && pastas[index].editable && !pastas[index].encrypt_client {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+        if pastas[index].editable && !pastas[index].encrypt_client {
         if pastas[index].readonly {
             let res = decrypt(pastas[index].encrypted_key.as_ref().unwrap(), &password);
             if res.is_ok() {
@@ -304,11 +266,7 @@ pub async fn post_edit(
     id: web::Path<String>,
     mut payload: Multipart,
 ) -> Result<HttpResponse, Error> {
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     let mut pastas = data.pastas.lock().unwrap();
 
@@ -330,8 +288,9 @@ pub async fn post_edit(
         }
     }
 
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
+    if let Some(i) = find_pasta_by_slug(&pastas, &slug) {
+        let pasta = &pastas[i];
+        if true {
             if pasta.editable && !pasta.encrypt_client {
                 if pastas[i].readonly || pastas[i].encrypt_server {
                     if password != *"" {

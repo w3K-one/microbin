@@ -3,9 +3,7 @@ use std::path::PathBuf;
 
 use crate::args::ARGS;
 use crate::util::auth;
-use crate::util::hashids::to_u64 as hashid_to_u64;
-use crate::util::misc::remove_expired;
-use crate::util::{animalnumbers::to_u64, misc::decrypt_file};
+use crate::util::misc::{decrypt_file, find_pasta_by_slug, remove_expired};
 use crate::AppState;
 use actix_multipart::Multipart;
 use actix_web::http::header;
@@ -20,29 +18,15 @@ pub async fn post_secure_file(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
     let password = auth::password_from_multipart(payload).await?;
 
-    if found {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
         if let Some(ref pasta_file) = pastas[index].file {
             let file = File::open(format!(
                 "{}/attachments/{}/data.enc",
@@ -83,27 +67,13 @@ pub async fn get_file(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let id_intern = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
-    } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
-    };
+    let slug = id.into_inner();
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
-    let mut index: usize = 0;
-    let mut found: bool = false;
-    for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id_intern {
-            index = i;
-            found = true;
-            break;
-        }
-    }
-
-    if found {
+    // find the pasta by slug (custom URL or generated ID)
+    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
         if let Some(ref pasta_file) = pastas[index].file {
             if pastas[index].encrypt_server {
                 return Ok(HttpResponse::Found()

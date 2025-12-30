@@ -71,6 +71,7 @@ pub struct Pasta {
     pub read_count: u64,
     pub burn_after_reads: u64,
     pub pasta_type: String,
+    pub custom_url: Option<String>,
 }
 
 impl Pasta {
