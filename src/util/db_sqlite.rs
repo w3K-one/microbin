@@ -42,7 +42,8 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
             last_read INTEGER NOT NULL,
             read_count INTEGER NOT NULL,
             burn_after_reads INTEGER NOT NULL,
-            pasta_type TEXT NOT NULL
+            pasta_type TEXT NOT NULL,
+            custom_url TEXT
         );",
         params![],
     )
@@ -67,8 +68,9 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
                 last_read,
                 read_count,
                 burn_after_reads,
-                pasta_type
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                pasta_type,
+                custom_url
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 pasta.id,
                 pasta.content,
@@ -87,6 +89,7 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
                 pasta.read_count,
                 pasta.burn_after_reads,
                 pasta.pasta_type,
+                pasta.custom_url.as_deref(),
             ],
         )
         .expect("Failed to insert pasta.");
@@ -116,7 +119,8 @@ pub fn select_all_from_db() -> Vec<Pasta> {
             last_read INTEGER NOT NULL,
             read_count INTEGER NOT NULL,
             burn_after_reads INTEGER NOT NULL,
-            pasta_type TEXT NOT NULL
+            pasta_type TEXT NOT NULL,
+            custom_url TEXT
         );",
         params![],
     )
@@ -157,6 +161,7 @@ pub fn select_all_from_db() -> Vec<Pasta> {
                 read_count: row.get(14)?,
                 burn_after_reads: row.get(15)?,
                 pasta_type: row.get(16)?,
+                custom_url: row.get(17)?,
             })
         })
         .expect("Failed to select Pastas from SQLite database.");

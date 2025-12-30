@@ -3,7 +3,12 @@
     "allow": [
       "Bash(cargo build:*)",
       "Bash(chmod:*)",
-      "Bash(./microbin:*)"
+      "Bash(./microbin:*)",
+      "Bash(source \"$HOME/.cargo/env\")",
+      "Bash(/Users/ApoCaLypSe/.cargo/bin/cargo build)",
+      "Bash(/Users/ApoCaLypSe/.cargo/bin/cargo run -- --version)",
+      "Bash(/Users/ApoCaLypSe/.cargo/bin/cargo clippy --all-features)",
+      "Bash(/Users/ApoCaLypSe/.cargo/bin/cargo clippy)"
     ]
   }
 }

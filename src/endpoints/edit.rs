@@ -333,8 +333,6 @@ pub async fn post_edit(
                         ),
                     ))
                     .finish());
-            } else {
-                break;
             }
         }
     }
