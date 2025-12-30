@@ -174,6 +174,7 @@ pub async fn post_edit_private(
         }
 
         return Ok(response);
+        }
     }
     Ok(HttpResponse::Ok()
         .content_type("text/html")
@@ -254,6 +255,7 @@ pub async fn post_submit_edit_private(
                 format!("/auth/{}/success", pastas[index].id_as_animals()),
             ))
             .finish());
+        }
     }
     Ok(HttpResponse::Ok()
         .content_type("text/html")
