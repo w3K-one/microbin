@@ -33,7 +33,7 @@
     <b>
         {% if !args.hide_logo %}
         <a href="{{ args.public_path_as_str() }}/">
-            <img src="{{ args.public_path_as_str() }}/static/logo.png" alt="MicroBin">
+            <img src="{{ args.public_path_as_str() }}/static/logo.png" alt="MicroBin" width="100">
         </a>
         {%- endif %}
         {% if args.title.as_ref().is_some() %}{{ args.title.as_ref().unwrap() }}{%- endif %}
