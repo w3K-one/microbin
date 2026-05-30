@@ -19,6 +19,8 @@ use log::LevelFilter;
 use rand::RngCore;
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Mutex;
 
 fn load_or_create_session_key() -> Key {
@@ -31,7 +33,11 @@ fn load_or_create_session_key() -> Key {
     }
     let mut buf = [0u8; 64];
     rand::thread_rng().fill_bytes(&mut buf);
-    match fs::OpenOptions::new().write(true).create(true).truncate(true).open(&path) {
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    match opts.open(&path) {
         Ok(mut f) => {
             if let Err(e) = f.write_all(&buf) {
                 log::warn!("Could not write session.key: {e}");
