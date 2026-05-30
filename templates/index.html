@@ -244,6 +244,15 @@
 
     </div>
 
+    <div style="margin-bottom: 1rem;">
+        <label for="custom_url">Custom URL (optional) <sup><a href="{{ args.public_path_as_str() }}/guide#custom-url">﹖</a></sup></label><br>
+        <input style="width: 100%; height: 28px; font-family: monospace;" type="text" id="custom_url" name="custom_url" placeholder="my-custom-url" pattern="[a-zA-Z0-9_-]+" maxlength="100" />
+        <div id="custom_url_feedback" style="margin-top: 0.25rem; display: none;">
+            <small id="custom_url_message"></small>
+        </div>
+        <small style="color: var(--dim);">Only letters, numbers, hyphens, and underscores</small>
+    </div>
+
     <label>Content</label>
     <textarea style="width: 100%; min-height: 100px; margin-bottom: 2em; font-family: monospace;" id="content-input"
         autofocus placeholder="Type something here."></textarea>
@@ -618,6 +627,37 @@
         fileOversized();
     });
     // {%- endif %}
+
+    // Custom URL real-time validation
+    const customUrlInput = document.getElementById('custom_url');
+    const customUrlFeedback = document.getElementById('custom_url_feedback');
+    const customUrlMessage = document.getElementById('custom_url_message');
+    let urlDebounce;
+    if (customUrlInput) {
+        customUrlInput.addEventListener('input', function() {
+            clearTimeout(urlDebounce);
+            const val = this.value.trim();
+            if (!val) { customUrlFeedback.style.display = 'none'; return; }
+            const valid = /^[a-zA-Z0-9_-]+$/.test(val);
+            if (!valid) {
+                customUrlFeedback.style.display = 'block';
+                customUrlMessage.style.color = '#ff9800';
+                customUrlMessage.textContent = '⚠ Only letters, numbers, hyphens, and underscores allowed';
+                return;
+            }
+            customUrlFeedback.style.display = 'block';
+            customUrlMessage.style.color = 'var(--dim)';
+            customUrlMessage.textContent = 'Checking…';
+            urlDebounce = setTimeout(async () => {
+                try {
+                    const r = await fetch(`{{ args.public_path_as_str() }}/api/check-url/${encodeURIComponent(val)}`);
+                    const d = await r.json();
+                    customUrlMessage.style.color = d.available ? '#4caf50' : '#f44336';
+                    customUrlMessage.textContent = d.available ? '✓ Available' : '✗ Already in use';
+                } catch { customUrlFeedback.style.display = 'none'; }
+            }, 500);
+        });
+    }
 
 </script>
 
