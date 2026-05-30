@@ -1,8 +1,37 @@
 {% include "header.html" %}
+<style>
+    body { max-width: 1400px !important; font-size: 0.82rem; }
+    thead th { white-space: nowrap; }
+    td { white-space: nowrap; }
+    .expired-row td { opacity: 0.55; }
+    .badge-expired {
+        display: inline-block; margin-left: 0.4rem;
+        background: #5a1a1a; color: #f08080;
+        font-size: 0.68rem; font-weight: 600; letter-spacing: .04em;
+        padding: 1px 6px; border-radius: 4px; vertical-align: middle;
+    }
+    .badge-private {
+        display: inline-block; margin-left: 0.4rem;
+        background: #1a2e5a; color: #7ba8f0;
+        font-size: 0.68rem; font-weight: 600; letter-spacing: .04em;
+        padding: 1px 6px; border-radius: 4px; vertical-align: middle;
+    }
+    .admin-actions { display: flex; gap: 0.75rem; margin-bottom: 1.5rem; }
+    .btn-danger {
+        background: #6b1c1c; border: 1px solid #9b2c2c; color: #f8a0a0;
+        padding: 0.35rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem;
+    }
+    .btn-danger:hover { background: #8b2c2c; }
+    .btn-secondary {
+        background: var(--surface); border: 1px solid var(--border); color: var(--text);
+        padding: 0.35rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem;
+    }
+    .btn-secondary:hover { background: var(--card); }
+</style>
 
 <h2>w3K MicroBin Admin</h2>
 
-<table style="width: 320px; margin: 0 0 1.5rem;">
+<table style="width: 340px; margin: 0 0 1.2rem;">
     <tbody>
         <tr>
             <td><b>Version</b></td>
@@ -23,6 +52,14 @@
 <p style="color: var(--warn);">{{message}}</p>
 {%- endif %}
 
+<div class="admin-actions">
+    <form method="POST" action="/@/prune">
+        <button type="submit" class="btn-danger">Prune All Expired</button>
+    </form>
+    <form method="POST" action="/@/logout">
+        <button type="submit" class="btn-secondary">Logout</button>
+    </form>
+</div>
 
 <h3>Uploads</h3>
 {% if args.pure_html %}
@@ -44,9 +81,11 @@
         <tbody>
             {% for pasta in pastas %}
             {% if pasta.pasta_type == "text" %}
-            <tr>
+            <tr{% if pasta.expired %} class="expired-row"{%- endif %}>
                 <td>
                     <a href="{{ args.public_path_as_str()}}/upload/{{pasta.slug()}}">{{pasta.slug()}}</a>
+                    {% if pasta.expired %}<span class="badge-expired">expired</span>{%- endif %}
+                    {% if pasta.private %}<span class="badge-private">private</span>{%- endif %}
                 </td>
                 <td>
                     {{pasta.created_as_string()}}
@@ -62,10 +101,10 @@
                 <td>{% if pasta.private %}✔️{%- endif %}</td>
                 <td>{% if pasta.editable %}✔️{%- endif %}</td>
                 <td>
-                    {% if pasta.content != "" %}
+                    {% if pasta.content != "" && !pasta.expired %}
                     <a style="margin-right:0.5rem" href="{{ args.public_path_as_str()}}/raw/{{pasta.slug()}}">Text</a>
                     {%- endif %}
-                    {% if pasta.file.is_some() %}
+                    {% if pasta.file.is_some() && !pasta.expired %}
                     <a style="margin-right:0.5rem" href="{{ args.public_path_as_str() }}/file/{{pasta.slug()}}">
                         {% if pasta.file.as_ref().unwrap().is_image() %}Image
                         {%- else if pasta.file.as_ref().unwrap().is_video() %}Video
@@ -75,11 +114,11 @@
                 </td>
                 <td>
                     {% if args.show_read_stats %}
-                    <span style="font-size: small">{{pasta.read_count}} hits<br>last {{pasta.short_last_read_time_ago_as_string()}}</span>
+                    <span>{{pasta.read_count}} hits<br>last {{pasta.short_last_read_time_ago_as_string()}}</span>
                     {%- endif %}
                 </td>
                 <td>
-                    {% if pasta.editable %}
+                    {% if pasta.editable && !pasta.expired %}
                     <a style="margin-right:0.5rem" href="{{ args.public_path_as_str() }}/edit/{{pasta.slug()}}">Edit</a>
                     {%- endif %}
                     <a href="{{ args.public_path_as_str() }}/remove/{{pasta.slug()}}">Remove</a>
@@ -110,9 +149,11 @@
             <tbody>
                 {% for pasta in pastas %}
                 {% if pasta.pasta_type == "url" %}
-                <tr>
+                <tr{% if pasta.expired %} class="expired-row"{%- endif %}>
                     <td>
                         <a href="{{ args.public_path_as_str()}}/upload/{{pasta.slug()}}">{{pasta.slug()}}</a>
+                        {% if pasta.expired %}<span class="badge-expired">expired</span>{%- endif %}
+                        {% if pasta.private %}<span class="badge-private">private</span>{%- endif %}
                     </td>
                     <td>
                         {{pasta.created_as_string()}}

@@ -82,6 +82,10 @@ pub struct Pasta {
     pub burn_after_reads: u64,
     pub pasta_type: String,
     pub custom_url: Option<String>,
+    #[serde(default)]
+    pub expired: bool,
+    #[serde(default)]
+    pub expired_at: i64,
 }
 
 impl Pasta {

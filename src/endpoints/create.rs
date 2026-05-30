@@ -106,6 +106,8 @@ pub async fn create(
         pasta_type: String::from(""),
         expiration: expiration_to_timestamp(&ARGS.default_expiry, timenow),
         custom_url: None,
+        expired: false,
+        expired_at: 0,
     };
 
     let mut random_key: String = String::from("");

@@ -109,6 +109,7 @@ reqwest = "0.12"
 - **Base Image:** debian:bookworm-slim (production)
 - **Build Image:** rust:latest (build stage)
 - **Registry:** Docker Hub (w3kllc/microbin)
+- **Build optimization:** Native ARM runners available (4x faster) - see ARM-RUNNERS.md
 
 ---
 
@@ -222,10 +223,13 @@ The "Build-Em-All" workflow handles multi-architecture Docker builds:
 ## Work Completed
 
 ### 1. Multi-Architecture Docker Builds
-- Reduced build times from ~3 hours to ~40 minutes
+- Reduced build times from ~3 hours to ~40 minutes (QEMU emulation)
+- **Can be further reduced to ~10-15 minutes using native ARM runners** (see ARM-RUNNERS.md)
 - Target architectures: amd64, arm64 (covers 99% of use cases)
 - Uses `debian:bookworm-slim` base image (not bitnami/minideb)
-- Native builds via QEMU emulation
+- Two workflow options:
+  - `BuildEmAll.yml` - QEMU emulation (slower, zero setup)
+  - `BuildEmAll-Fast.yml` - Native ARM builds (4x faster, requires ARM runner)
 
 ### 2. Enhanced Default Configuration
 Implemented directly in source/config:

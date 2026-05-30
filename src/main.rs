@@ -8,6 +8,8 @@ use crate::endpoints::{
 use crate::pasta::Pasta;
 use crate::util::db::read_all;
 use crate::util::telemetry::start_telemetry_thread;
+use actix_session::{storage::CookieSessionStore, SessionMiddleware};
+use actix_web::cookie::Key;
 use actix_web::middleware::Condition;
 use actix_web::{middleware, web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
@@ -17,6 +19,17 @@ use log::LevelFilter;
 use std::fs;
 use std::io::Write;
 use std::sync::Mutex;
+
+fn make_session_key() -> Key {
+    // Deterministic key derived from admin password so sessions survive restarts.
+    let pw = ARGS.auth_admin_password.as_bytes();
+    let mut seed = [0u8; 64];
+    for (i, &b) in pw.iter().enumerate() {
+        seed[i % 64] ^= b;
+        seed[(i + 32) % 64] ^= b.rotate_left(3);
+    }
+    Key::from(&seed)
+}
 
 pub mod args;
 pub mod pasta;
@@ -101,9 +114,16 @@ async fn main() -> std::io::Result<()> {
         start_telemetry_thread();
     }
 
+    let session_key = make_session_key();
+
     HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
+            .wrap(
+                SessionMiddleware::builder(CookieSessionStore::default(), session_key.clone())
+                    .cookie_secure(false)
+                    .build(),
+            )
             .wrap(middleware::NormalizePath::trim())
             .service(create::index)
             .service(guide::guide)
@@ -135,6 +155,8 @@ async fn main() -> std::io::Result<()> {
             .service(edit::post_submit_edit_private)
             .service(admin::get_admin)
             .service(admin::post_admin)
+            .service(admin::post_admin_prune)
+            .service(admin::post_admin_logout)
             .service(static_resources::static_resources)
             .service(qr::getqr)
             .service(file::get_file)

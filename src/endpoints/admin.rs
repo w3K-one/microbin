@@ -1,9 +1,10 @@
 use crate::args::{Args, ARGS};
 use crate::pasta::Pasta;
-use crate::util::misc::remove_expired;
-use crate::util::version::{fetch_latest_version, Version, CURRENT_VERSION};
+use crate::util::misc::{prune_all_expired, remove_expired};
+use crate::util::version::{Version, CURRENT_VERSION};
 use crate::AppState;
 use actix_multipart::Multipart;
+use actix_session::Session;
 use actix_web::{get, post, web, Error, HttpResponse};
 use askama::Template;
 use futures::TryStreamExt;
@@ -19,29 +20,71 @@ struct AdminTemplate<'a> {
     update: &'a Option<Version>,
 }
 
+fn is_admin(session: &Session) -> bool {
+    session.get::<bool>("admin").unwrap_or(None) == Some(true)
+}
+
 #[get("/@")]
-pub async fn get_admin() -> Result<HttpResponse, Error> {
-    return Ok(HttpResponse::Found()
-        .append_header(("Location", "/@/auth"))
-        .finish());
+pub async fn get_admin(
+    session: Session,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, Error> {
+    if !is_admin(&session) {
+        return Ok(HttpResponse::Found()
+            .append_header(("Location", "/@/auth"))
+            .finish());
+    }
+
+    let mut pastas = data.pastas.lock().unwrap();
+
+    remove_expired(&mut pastas);
+
+    pastas.sort_by(|a, b| b.created.cmp(&a.created));
+
+    let status = if ARGS.auth_admin_username == "admin" && ARGS.auth_admin_password == "m1cr0b1n" {
+        "WARNING"
+    } else {
+        "OK"
+    };
+
+    let message = if ARGS.auth_admin_username == "admin" && ARGS.auth_admin_password == "m1cr0b1n" {
+        "Warning: You are using the default admin credentials. This is a security risk."
+    } else if ARGS.public_path.is_none() {
+        "Warning: No public URL set. QR code and URL copying are disabled."
+    } else {
+        ""
+    };
+
+    Ok(HttpResponse::Ok().content_type("text/html").body(
+        AdminTemplate {
+            pastas: &pastas,
+            args: &ARGS,
+            status: &String::from(status),
+            version_string: &format!("{}", CURRENT_VERSION.long_title),
+            message: &String::from(message),
+            update: &None,
+        }
+        .render()
+        .unwrap(),
+    ))
 }
 
 #[post("/@")]
 pub async fn post_admin(
-    data: web::Data<AppState>,
     mut payload: Multipart,
+    session: Session,
 ) -> Result<HttpResponse, Error> {
-    let mut username = String::from("");
-    let mut password = String::from("");
+    let mut username = String::new();
+    let mut password = String::new();
 
     while let Some(mut field) = payload.try_next().await? {
         if field.name() == Some("username") {
             while let Some(chunk) = field.try_next().await? {
-                username.push_str(std::str::from_utf8(&chunk).unwrap().to_string().as_str());
+                username.push_str(std::str::from_utf8(&chunk).unwrap_or(""));
             }
         } else if field.name() == Some("password") {
             while let Some(chunk) = field.try_next().await? {
-                password.push_str(std::str::from_utf8(&chunk).unwrap().to_string().as_str());
+                password.push_str(std::str::from_utf8(&chunk).unwrap_or(""));
             }
         }
     }
@@ -52,55 +95,36 @@ pub async fn post_admin(
             .finish());
     }
 
+    let _ = session.insert("admin", true);
+
+    Ok(HttpResponse::Found()
+        .append_header(("Location", "/@"))
+        .finish())
+}
+
+#[post("/@/prune")]
+pub async fn post_admin_prune(
+    session: Session,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, Error> {
+    if !is_admin(&session) {
+        return Ok(HttpResponse::Found()
+            .append_header(("Location", "/@/auth"))
+            .finish());
+    }
+
     let mut pastas = data.pastas.lock().unwrap();
+    prune_all_expired(&mut pastas);
 
-    remove_expired(&mut pastas);
+    Ok(HttpResponse::Found()
+        .append_header(("Location", "/@"))
+        .finish())
+}
 
-    // sort pastas in reverse-chronological order of creation time
-    pastas.sort_by(|a, b| b.created.cmp(&a.created));
-
-    // todo status report more sophisticated
-    let mut status = "OK";
-    let mut message = "";
-
-    if ARGS.public_path.is_none() {
-        status = "WARNING";
-        message = "Warning: No public URL set with --public-path parameter. QR code and URL Copying functions have been disabled"
-    }
-
-    if ARGS.auth_admin_username == "admin" && ARGS.auth_admin_password == "m1cr0b1n" {
-        status = "WARNING";
-        message = "Warning: You are using the default admin login details. This is a security risk, please change them."
-    }
-
-    let update;
-
-    if !ARGS.disable_update_checking {
-        let latest_version_res = fetch_latest_version().await;
-        if latest_version_res.is_ok() {
-            let latest_version = latest_version_res.unwrap();
-            if latest_version.newer_than_current() {
-                update = Some(latest_version);
-            } else {
-                update = None;
-            }
-        } else {
-            update = None;
-        }
-    } else {
-        update = None;
-    }
-
-    Ok(HttpResponse::Ok().content_type("text/html").body(
-        AdminTemplate {
-            pastas: &pastas,
-            args: &ARGS,
-            status: &String::from(status),
-            version_string: &format!("{}", CURRENT_VERSION.long_title),
-            message: &String::from(message),
-            update: &update,
-        }
-        .render()
-        .unwrap(),
-    ))
+#[post("/@/logout")]
+pub async fn post_admin_logout(session: Session) -> Result<HttpResponse, Error> {
+    session.purge();
+    Ok(HttpResponse::Found()
+        .append_header(("Location", "/@/auth"))
+        .finish())
 }

@@ -15,17 +15,11 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
     let conn = Connection::open(format!("{}/database.sqlite", ARGS.data_dir))
         .expect("Failed to open SQLite database!");
 
-    conn.execute(
-        "
-        DROP TABLE IF EXISTS pasta;
-        );",
-        params![],
-    )
-    .expect("Failed to drop SQLite table for Pasta!");
+    conn.execute("DROP TABLE IF EXISTS pasta;", params![])
+        .expect("Failed to drop SQLite table for Pasta!");
 
     conn.execute(
-        "
-        CREATE TABLE IF NOT EXISTS pasta (
+        "CREATE TABLE IF NOT EXISTS pasta (
             id INTEGER PRIMARY KEY,
             content TEXT NOT NULL,
             file_name TEXT,
@@ -43,7 +37,9 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
             read_count INTEGER NOT NULL,
             burn_after_reads INTEGER NOT NULL,
             pasta_type TEXT NOT NULL,
-            custom_url TEXT
+            custom_url TEXT,
+            expired INTEGER NOT NULL DEFAULT 0,
+            expired_at INTEGER NOT NULL DEFAULT 0
         );",
         params![],
     )
@@ -52,33 +48,20 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
     for pasta in pasta_data.iter() {
         conn.execute(
             "INSERT INTO pasta (
-                id,
-                content,
-                file_name,
-                file_size,
-                extension,
-                private,
-                read_only,
-                editable,
-                encrypt_server,
-                encrypt_client,
-                encrypted_key,
-                created,
-                expiration,
-                last_read,
-                read_count,
-                burn_after_reads,
-                pasta_type,
-                custom_url
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                id, content, file_name, file_size, extension, read_only, private,
+                editable, encrypt_server, encrypt_client, encrypted_key, created,
+                expiration, last_read, read_count, burn_after_reads, pasta_type,
+                custom_url, expired, expired_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                      ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 pasta.id,
                 pasta.content,
                 pasta.file.as_ref().map_or("", |f| f.name.as_str()),
                 pasta.file.as_ref().map_or(0, |f| f.size.as_u64()),
                 pasta.extension,
-                pasta.private as i32,
                 pasta.readonly as i32,
+                pasta.private as i32,
                 pasta.editable as i32,
                 pasta.encrypt_server as i32,
                 pasta.encrypt_client as i32,
@@ -90,6 +73,8 @@ pub fn rewrite_all_to_db(pasta_data: &[Pasta]) {
                 pasta.burn_after_reads,
                 pasta.pasta_type,
                 pasta.custom_url.as_deref(),
+                pasta.expired as i32,
+                pasta.expired_at,
             ],
         )
         .expect("Failed to insert pasta.");
@@ -100,9 +85,9 @@ pub fn select_all_from_db() -> Vec<Pasta> {
     let conn = Connection::open(format!("{}/database.sqlite", ARGS.data_dir))
         .expect("Failed to open SQLite database!");
 
+    // Create table with new columns if it doesn't exist; migrate old schema if needed
     conn.execute(
-        "
-        CREATE TABLE IF NOT EXISTS pasta (
+        "CREATE TABLE IF NOT EXISTS pasta (
             id INTEGER PRIMARY KEY,
             content TEXT NOT NULL,
             file_name TEXT,
@@ -120,14 +105,33 @@ pub fn select_all_from_db() -> Vec<Pasta> {
             read_count INTEGER NOT NULL,
             burn_after_reads INTEGER NOT NULL,
             pasta_type TEXT NOT NULL,
-            custom_url TEXT
+            custom_url TEXT,
+            expired INTEGER NOT NULL DEFAULT 0,
+            expired_at INTEGER NOT NULL DEFAULT 0
         );",
         params![],
     )
     .expect("Failed to create SQLite table for Pasta!");
 
+    // Add new columns if upgrading from old schema
+    let _ = conn.execute(
+        "ALTER TABLE pasta ADD COLUMN custom_url TEXT;",
+        params![],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE pasta ADD COLUMN expired INTEGER NOT NULL DEFAULT 0;",
+        params![],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE pasta ADD COLUMN expired_at INTEGER NOT NULL DEFAULT 0;",
+        params![],
+    );
+
     let mut stmt = conn
-        .prepare("SELECT * FROM pasta ORDER BY created ASC")
+        .prepare("SELECT id, content, file_name, file_size, extension, read_only, private, \
+                  editable, encrypt_server, encrypt_client, encrypted_key, created, expiration, \
+                  last_read, read_count, burn_after_reads, pasta_type, custom_url, expired, expired_at \
+                  FROM pasta ORDER BY created ASC")
         .expect("Failed to prepare SQL statement to load pastas");
 
     let pasta_iter = stmt
@@ -135,18 +139,15 @@ pub fn select_all_from_db() -> Vec<Pasta> {
             Ok(Pasta {
                 id: row.get(0)?,
                 content: row.get(1)?,
-                file: if let (Some(file_name), Some(file_size)) = (row.get(2)?, row.get(3)?) {
-                    let file_size: u64 = file_size;
-                    if file_name != "" && file_size != 0 {
-                        Some(PastaFile {
-                            name: file_name,
-                            size: ByteSize::b(file_size),
-                        })
-                    } else {
-                        None
+                file: {
+                    let file_name: Option<String> = row.get(2)?;
+                    let file_size: Option<u64> = row.get(3)?;
+                    match (file_name, file_size) {
+                        (Some(name), Some(size)) if !name.is_empty() && size != 0 => {
+                            Some(PastaFile { name, size: ByteSize::b(size) })
+                        }
+                        _ => None,
                     }
-                } else {
-                    None
                 },
                 extension: row.get(4)?,
                 readonly: row.get(5)?,
@@ -162,6 +163,8 @@ pub fn select_all_from_db() -> Vec<Pasta> {
                 burn_after_reads: row.get(15)?,
                 pasta_type: row.get(16)?,
                 custom_url: row.get(17)?,
+                expired: row.get::<_, i32>(18).unwrap_or(0) != 0,
+                expired_at: row.get(19).unwrap_or(0),
             })
         })
         .expect("Failed to select Pastas from SQLite database.");
@@ -176,8 +179,7 @@ pub fn insert(pasta: &Pasta) {
         .expect("Failed to open SQLite database!");
 
     conn.execute(
-        "
-        CREATE TABLE IF NOT EXISTS pasta (
+        "CREATE TABLE IF NOT EXISTS pasta (
             id INTEGER PRIMARY KEY,
             content TEXT NOT NULL,
             file_name TEXT,
@@ -194,32 +196,28 @@ pub fn insert(pasta: &Pasta) {
             last_read INTEGER NOT NULL,
             read_count INTEGER NOT NULL,
             burn_after_reads INTEGER NOT NULL,
-            pasta_type TEXT NOT NULL
+            pasta_type TEXT NOT NULL,
+            custom_url TEXT,
+            expired INTEGER NOT NULL DEFAULT 0,
+            expired_at INTEGER NOT NULL DEFAULT 0
         );",
         params![],
     )
     .expect("Failed to create SQLite table for Pasta!");
 
+    // Ensure columns exist for older databases
+    let _ = conn.execute("ALTER TABLE pasta ADD COLUMN custom_url TEXT;", params![]);
+    let _ = conn.execute("ALTER TABLE pasta ADD COLUMN expired INTEGER NOT NULL DEFAULT 0;", params![]);
+    let _ = conn.execute("ALTER TABLE pasta ADD COLUMN expired_at INTEGER NOT NULL DEFAULT 0;", params![]);
+
     conn.execute(
         "INSERT INTO pasta (
-                id,
-                content,
-                file_name,
-                file_size,
-                extension,
-                read_only,
-                private,
-                editable,
-                encrypt_server,
-                encrypt_client,
-                encrypted_key,
-                created,
-                expiration,
-                last_read,
-                read_count,
-                burn_after_reads,
-                pasta_type
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            id, content, file_name, file_size, extension, read_only, private,
+            editable, encrypt_server, encrypt_client, encrypted_key, created,
+            expiration, last_read, read_count, burn_after_reads, pasta_type,
+            custom_url, expired, expired_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                  ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             pasta.id,
             pasta.content,
@@ -238,6 +236,9 @@ pub fn insert(pasta: &Pasta) {
             pasta.read_count,
             pasta.burn_after_reads,
             pasta.pasta_type,
+            pasta.custom_url.as_deref(),
+            pasta.expired as i32,
+            pasta.expired_at,
         ],
     )
     .expect("Failed to insert pasta.");
@@ -249,22 +250,12 @@ pub fn update(pasta: &Pasta) {
 
     conn.execute(
         "UPDATE pasta SET
-            content = ?2,
-            file_name = ?3,
-            file_size = ?4,
-            extension = ?5,
-            read_only = ?6,
-            private = ?7,
-            editable = ?8,
-            encrypt_server = ?9,
-            encrypt_client = ?10,
-            encrypted_key = ?11,
-            created = ?12,
-            expiration = ?13,
-            last_read = ?14,
-            read_count = ?15,
-            burn_after_reads = ?16,
-            pasta_type = ?17
+            content = ?2, file_name = ?3, file_size = ?4, extension = ?5,
+            read_only = ?6, private = ?7, editable = ?8, encrypt_server = ?9,
+            encrypt_client = ?10, encrypted_key = ?11, created = ?12,
+            expiration = ?13, last_read = ?14, read_count = ?15,
+            burn_after_reads = ?16, pasta_type = ?17, custom_url = ?18,
+            expired = ?19, expired_at = ?20
         WHERE id = ?1;",
         params![
             pasta.id,
@@ -284,6 +275,9 @@ pub fn update(pasta: &Pasta) {
             pasta.read_count,
             pasta.burn_after_reads,
             pasta.pasta_type,
+            pasta.custom_url.as_deref(),
+            pasta.expired as i32,
+            pasta.expired_at,
         ],
     )
     .expect("Failed to update pasta.");
@@ -293,10 +287,6 @@ pub fn delete_by_id(id: u64) {
     let conn = Connection::open(format!("{}/database.sqlite", ARGS.data_dir))
         .expect("Failed to open SQLite database!");
 
-    conn.execute(
-        "DELETE FROM pasta 
-        WHERE id = ?1;",
-        params![id],
-    )
-    .expect("Failed to delete pasta.");
+    conn.execute("DELETE FROM pasta WHERE id = ?1;", params![id])
+        .expect("Failed to delete pasta.");
 }

@@ -4,7 +4,7 @@
 {% if pastas.is_empty() %}
 <br>
 <p>
-    No uploads yet. 😔 Create one <a href="{{ args.public_path_as_str() }}/">here</a>.
+    No uploads yet. Create one <a href="{{ args.public_path_as_str() }}/">here</a>.
 </p>
 <br>
 {%- else %}
@@ -16,78 +16,58 @@
         <table style="width: 100%; min-width: 720px;">
             {% endif %}
             <thead>
-                <th style="width: 25%">
-                    Key
-                </th>
-                <th style="width: 10%">
-                </th>
-                <th style="width: 15%">
-                    Created
-                </th>
-                <th style="width: 15%">
-                    Expiration
-                </th>
-                <th style="width: 15%">
-                    Contents
-                </th>
-
-                <th style="width: 10%">
-                </th>
-                <th style="width: 10%">
-                </th>
+                <th style="width: 25%">Key</th>
+                <th style="width: 10%"></th>
+                <th style="width: 15%">Created</th>
+                <th style="width: 15%">Expiration</th>
+                <th style="width: 15%">Contents</th>
+                <th style="width: 10%"></th>
+                <th style="width: 10%"></th>
             </thead>
             <tbody>
                 {% for pasta in pastas %}
-                {% if pasta.pasta_type == "text" && !pasta.private %}
-                <tr>
+                {% if pasta.pasta_type == "text" && (is_admin || (!pasta.private && !pasta.expired)) %}
+                <tr{% if pasta.expired %} class="expired-row"{%- endif %}>
                     <td>
-                        <a
-                            href="{{ args.public_path_as_str()}}/upload/{{pasta.slug()}}">{{pasta.slug()}}</a>
+                        <a href="{{ args.public_path_as_str()}}/upload/{{pasta.slug()}}">{{pasta.slug()}}</a>
+                        {% if pasta.expired %}<span class="badge-expired">expired</span>{%- endif %}
+                        {% if pasta.private && is_admin %}<span class="badge-private">private</span>{%- endif %}
+                        {% if pasta.readonly %}<span class="badge-info">readonly</span>{%- endif %}
                     </td>
                     <td>
                         {% if args.public_path_as_str() != "" %}
                         {% if args.short_path_as_str() == "" %}
-                        <a style="margin-right:1rem; cursor: pointer;" class="copy-button" null
+                        <a style="margin-right:1rem; cursor: pointer;" class="copy-button"
                             data-url="{{ args.public_path_as_str()}}/upload/{{pasta.slug()}}">Copy</a>
                         {% else %}
-                        <a style="margin-right:1rem; cursor: pointer;" class="copy-button" data-url="{{ args.short_path_as_str()
-                        }}/p/{{pasta.slug()}}">Copy</a>
+                        <a style="margin-right:1rem; cursor: pointer;" class="copy-button"
+                            data-url="{{ args.short_path_as_str() }}/p/{{pasta.slug()}}">Copy</a>
                         {% endif %}
                         {%- endif %}
                     </td>
+                    <td>{{pasta.created_as_string()}}</td>
+                    <td>{{pasta.expiration_as_string()}}</td>
                     <td>
-                        {{pasta.created_as_string()}}
-                    </td>
-                    <td>
-                        {{pasta.expiration_as_string()}}
-                    </td>
-                    <td>
-                        {% if pasta.content != "" %}
-                        <a style="margin-right:1rem"
-                            href="{{ args.public_path_as_str()}}/raw/{{pasta.slug()}}">Text</a>
+                        {% if pasta.content != "" && !pasta.expired %}
+                        <a style="margin-right:1rem" href="{{ args.public_path_as_str()}}/raw/{{pasta.slug()}}">Text</a>
                         {%- endif %}
-                        {% if pasta.file.is_some() %}
-                        <a style="margin-right:1rem"
-                            href="{{ args.public_path_as_str() }}/file/{{pasta.slug()}}">
-                            {% if pasta.file.as_ref().unwrap().is_image() %}
-                            Image
-                            {%- else if pasta.file.as_ref().unwrap().is_video() %}
-                            Video
-                            {%- else %}
-                            File
-                            {%- endif %}
+                        {% if pasta.file.is_some() && !pasta.expired %}
+                        <a style="margin-right:1rem" href="{{ args.public_path_as_str() }}/file/{{pasta.slug()}}">
+                            {% if pasta.file.as_ref().unwrap().is_image() %}Image
+                            {%- else if pasta.file.as_ref().unwrap().is_video() %}Video
+                            {%- else %}File{%- endif %}
                         </a>
                         {%- endif %}
                     </td>
-
                     <td>
-                        {% if pasta.editable %}
-                        <a style="margin-right:1rem"
-                            href="{{ args.public_path_as_str() }}/edit/{{pasta.slug()}}">Edit</a>
+                        {% if pasta.editable && !pasta.expired %}
+                        <a style="margin-right:1rem" href="{{ args.public_path_as_str() }}/edit/{{pasta.slug()}}">Edit</a>
                         {%- endif %}
                     </td>
                     <td>
+                        {% if is_admin %}
                         <a href="{{ args.public_path_as_str() }}/remove/{{pasta.slug()}}">Remove</a>
+                        {%- endif %}
                     </td>
                 </tr>
                 {%- endif %}
@@ -97,63 +77,53 @@
         <br>
         <h3>URL Redirects</h3>
         {% if args.pure_html %}
-        <table border="1" style="width: 100%; min-width: 720px; ">
+        <table border="1" style="width: 100%; min-width: 720px;">
             {% else %}
             <table style="width: 100%; min-width: 720px;">
                 {% endif %}
                 <thead>
-                    <th style=" width: 25%">
-                        Key
-                    </th>
-                    <th style="width: 10%">
-                    </th>
-                    <th style="width: 15%">
-                        Created
-                    </th>
-                    <th style="width: 15%">
-                        Expiration
-                    </th>
-                    <th style="width: 15%">
-                    </th>
-                    <th style="width: 10%">
-                    </th>
-                    <th style="width: 10%">
-                    </th>
+                    <th style="width: 25%">Key</th>
+                    <th style="width: 10%"></th>
+                    <th style="width: 15%">Created</th>
+                    <th style="width: 15%">Expiration</th>
+                    <th style="width: 15%"></th>
+                    <th style="width: 10%"></th>
+                    <th style="width: 10%"></th>
                 </thead>
+                <tbody>
                 {% for pasta in pastas %}
-                {% if pasta.pasta_type == "url" && !pasta.private %}
-                <tr>
+                {% if pasta.pasta_type == "url" && (is_admin || (!pasta.private && !pasta.expired)) %}
+                <tr{% if pasta.expired %} class="expired-row"{%- endif %}>
                     <td>
-                        <a
-                            href="{{ args.public_path_as_str() }}/upload/{{pasta.slug()}}">{{pasta.slug()}}</a>
+                        <a href="{{ args.public_path_as_str() }}/upload/{{pasta.slug()}}">{{pasta.slug()}}</a>
+                        {% if pasta.expired %}<span class="badge-expired">expired</span>{%- endif %}
+                        {% if pasta.private && is_admin %}<span class="badge-private">private</span>{%- endif %}
                     </td>
                     <td>
                         {% if args.short_path_as_str() == "" %}
                         <a style="margin-right:1rem; cursor: pointer;" class="copy-button"
-                            data-url="{{ args.public_path_as_str()                    }}/url/{{pasta.slug()}}">Copy</a>
+                            data-url="{{ args.public_path_as_str() }}/url/{{pasta.slug()}}">Copy</a>
                         {% else %}
-                        <a style="margin-right:1rem; cursor: pointer;" class="copy-button" data-url="{{ args.short_path_as_str()
-                        }}/u/{{pasta.slug()}}">Copy</a>
+                        <a style="margin-right:1rem; cursor: pointer;" class="copy-button"
+                            data-url="{{ args.short_path_as_str() }}/u/{{pasta.slug()}}">Copy</a>
                         {% endif %}
                     </td>
+                    <td>{{pasta.created_as_string()}}</td>
+                    <td>{{pasta.expiration_as_string()}}</td>
                     <td>
-                        {{pasta.created_as_string()}}
-                    </td>
-                    <td>
-                        {{pasta.expiration_as_string()}}
-                    </td>
-                    <td>
-                        <a style="margin-right:1rem"
-                            href="{{ args.public_path_as_str() }}/url/{{pasta.slug()}}">Redirect</a>
-                    </td>
-                    <td>
-                        {% if pasta.editable %}
-                        <a style="margin-right:1rem"
-                            href="{{ args.public_path_as_str() }}/edit/{{pasta.slug()}}">Edit</a>
+                        {% if !pasta.expired %}
+                        <a style="margin-right:1rem" href="{{ args.public_path_as_str() }}/url/{{pasta.slug()}}">Redirect</a>
                         {%- endif %}
                     </td>
                     <td>
+                        {% if pasta.editable && !pasta.expired %}
+                        <a style="margin-right:1rem" href="{{ args.public_path_as_str() }}/edit/{{pasta.slug()}}">Edit</a>
+                        {%- endif %}
+                    </td>
+                    <td>
+                        {% if is_admin %}
                         <a href="{{ args.public_path_as_str() }}/remove/{{pasta.slug()}}">Remove</a>
+                        {%- endif %}
                     </td>
                 </tr>
                 {%- endif %}
@@ -166,31 +136,37 @@
 
 <script>
     const copyURLBtns = document.getElementsByClassName("copy-button");
-
     for (var i = 0; i < copyURLBtns.length; i++) {
         copyURLBtns.item(i).addEventListener("click", event => {
-            event.srcElement
-            navigator.clipboard.writeText(event.srcElement.getAttribute("data-url"))
-            event.srcElement.innerHTML = "Copied"
-            setTimeout(() => {
-                event.srcElement.innerHTML = "Copy"
-            }, 1000)
-        })
+            navigator.clipboard.writeText(event.srcElement.getAttribute("data-url"));
+            event.srcElement.innerHTML = "Copied";
+            setTimeout(() => { event.srcElement.innerHTML = "Copy"; }, 1000);
+        });
     }
-
 </script>
 <style>
-    .copy-url-button {
-        font-size: small;
-        padding: 4px;
-        padding-left: 0.8rem;
-        padding-right: 0.8rem;
-        cursor: pointer;
+    th, td { white-space: nowrap; }
+    .expired-row td { opacity: 0.55; }
+    .badge-expired {
+        display: inline-block; margin-left: 0.4rem;
+        background: #5a1a1a; color: #f08080;
+        font-size: 0.7rem; font-weight: 600; letter-spacing: .04em;
+        padding: 1px 6px; border-radius: 4px;
+        vertical-align: middle;
     }
-
-    th,
-    td {
-        white-space: nowrap;
+    .badge-private {
+        display: inline-block; margin-left: 0.4rem;
+        background: #1a2e5a; color: #7ba8f0;
+        font-size: 0.7rem; font-weight: 600; letter-spacing: .04em;
+        padding: 1px 6px; border-radius: 4px;
+        vertical-align: middle;
+    }
+    .badge-info {
+        display: inline-block; margin-left: 0.4rem;
+        background: #1a3a2a; color: #60c080;
+        font-size: 0.7rem; font-weight: 600; letter-spacing: .04em;
+        padding: 1px 6px; border-radius: 4px;
+        vertical-align: middle;
     }
 </style>
 

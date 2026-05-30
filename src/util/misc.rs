@@ -14,7 +14,6 @@ use super::db::delete;
 use super::hashids::to_u64 as hashid_to_u64;
 
 pub fn remove_expired(pastas: &mut Vec<Pasta>) {
-    // get current time - this will be needed to check which pastas have expired
     let timenow: i64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_secs(),
         Err(_) => {
@@ -23,48 +22,61 @@ pub fn remove_expired(pastas: &mut Vec<Pasta>) {
         }
     } as i64;
 
-    pastas.retain(|p| {
-        // keep if:
-        //  expiration is `never` or not reached
-        //  AND
-        //  read count is less than burn limit, or no limit set
-        //  AND
-        //  has been read in the last N days where N is the arg --gc-days OR N is 0 (no GC)
-        if (p.expiration == 0 || p.expiration > timenow)
-            && (p.read_count < p.burn_after_reads || p.burn_after_reads == 0)
-            && (p.last_read_days_ago() < ARGS.gc_days || ARGS.gc_days == 0)
-        {
-            // keep
-            true
-        } else {
-            // remove from database
-            delete(None, Some(p.id));
+    let ninety_days: i64 = 90 * 24 * 60 * 60;
 
-            // remove the file itself
+    // Phase 1: mark newly-expired pastas; delete their files from disk but keep the record
+    for p in pastas.iter_mut() {
+        if p.expired {
+            continue;
+        }
+        let should_expire = (p.expiration != 0 && p.expiration <= timenow)
+            || (p.burn_after_reads > 0 && p.read_count >= p.burn_after_reads)
+            || (ARGS.gc_days > 0 && p.last_read_days_ago() >= ARGS.gc_days);
+
+        if should_expire {
+            p.expired = true;
+            p.expired_at = timenow;
+            // Delete the attachment from disk; the pasta record stays for admin review
             if let Some(file) = &p.file {
                 if fs::remove_file(format!(
                     "{}/attachments/{}/{}",
-                    ARGS.data_dir,
-                    p.id_as_animals(),
-                    file.name()
+                    ARGS.data_dir, p.id_as_animals(), file.name()
                 ))
                 .is_err()
                 {
-                    log::error!("Failed to delete file {}!", file.name())
+                    log::error!("Failed to delete expired file {}!", file.name());
                 }
-
-                // and remove the containing directory
                 if fs::remove_dir(format!(
                     "{}/attachments/{}/",
-                    ARGS.data_dir,
-                    p.id_as_animals()
+                    ARGS.data_dir, p.id_as_animals()
                 ))
                 .is_err()
                 {
-                    log::error!("Failed to delete directory {}!", file.name())
+                    log::error!("Failed to delete expired dir for {}!", file.name());
                 }
             }
+        }
+    }
+
+    // Phase 2: hard-delete records that have been expired more than 90 days
+    pastas.retain(|p| {
+        if p.expired && timenow - p.expired_at > ninety_days {
+            delete(None, Some(p.id));
             false
+        } else {
+            true
+        }
+    });
+}
+
+/// Hard-delete all expired pasta records immediately (admin prune action).
+pub fn prune_all_expired(pastas: &mut Vec<Pasta>) {
+    pastas.retain(|p| {
+        if p.expired {
+            delete(None, Some(p.id));
+            false
+        } else {
+            true
         }
     });
 }
