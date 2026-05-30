@@ -9,26 +9,37 @@ use crate::pasta::Pasta;
 use crate::util::db::read_all;
 use crate::util::telemetry::start_telemetry_thread;
 use actix_session::{storage::CookieSessionStore, SessionMiddleware};
-use actix_web::cookie::Key;
+use actix_web::cookie::{Key, SameSite};
 use actix_web::middleware::Condition;
 use actix_web::{middleware, web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
+use rand::RngCore;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::Mutex;
 
-fn make_session_key() -> Key {
-    // Deterministic key derived from admin password so sessions survive restarts.
-    let pw = ARGS.auth_admin_password.as_bytes();
-    let mut seed = [0u8; 64];
-    for (i, &b) in pw.iter().enumerate() {
-        seed[i % 64] ^= b;
-        seed[(i + 32) % 64] ^= b.rotate_left(3);
+fn load_or_create_session_key() -> Key {
+    let path = format!("{}/session.key", ARGS.data_dir);
+    if let Ok(mut f) = fs::File::open(&path) {
+        let mut buf = Vec::new();
+        if f.read_to_end(&mut buf).is_ok() && buf.len() >= 64 {
+            return Key::from(&buf[..64]);
+        }
     }
-    Key::from(&seed)
+    let mut buf = [0u8; 64];
+    rand::thread_rng().fill_bytes(&mut buf);
+    match fs::OpenOptions::new().write(true).create(true).truncate(true).open(&path) {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(&buf) {
+                log::warn!("Could not write session.key: {e}");
+            }
+        }
+        Err(e) => log::warn!("Could not create session.key: {e}"),
+    }
+    Key::from(&buf)
 }
 
 pub mod args;
@@ -114,7 +125,7 @@ async fn main() -> std::io::Result<()> {
         start_telemetry_thread();
     }
 
-    let session_key = make_session_key();
+    let session_key = load_or_create_session_key();
 
     HttpServer::new(move || {
         App::new()
@@ -122,6 +133,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), session_key.clone())
                     .cookie_secure(false)
+                    .cookie_http_only(true)
+                    .cookie_same_site(SameSite::Strict)
                     .build(),
             )
             .wrap(middleware::NormalizePath::trim())
