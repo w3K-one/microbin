@@ -104,6 +104,10 @@ pub fn expiration_to_timestamp(expiration: &str, timenow: i64) -> i64 {
 }
 
 pub fn is_valid_expiration(expiration: &str, max_expiry: &str) -> bool {
+    // "never" is always valid — expiration_to_timestamp caps it to 1 week when eternal_pasta is off
+    if expiration == "never" {
+        return true;
+    }
     let max_index = EXPIRATION_OPTIONS.iter().position(|&x| x == max_expiry).unwrap_or(5);
     let current_index = EXPIRATION_OPTIONS.iter().position(|&x| x == expiration).unwrap_or(0);
     current_index <= max_index

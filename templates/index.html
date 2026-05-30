@@ -111,13 +111,11 @@
                     </option>
                     {%- endif %}
                 </optgroup>
-                {% if args.eternal_pasta && max_expiry_index >= 13 %} {% if args.default_expiry ==
-                "never" %}
+                {% if args.default_expiry == "never" %}
                 <option selected value="never">
-                    {%- else %}
+                {%- else %}
                 <option value="never">{%- endif %} Never Expire
                 </option>
-                {%- endif %}
             </select>
         </div>
         {% if args.enable_burn_after %}
@@ -670,14 +668,24 @@
     /* {% if !args.pure_html %} */
     #attach-file-button-label {
         cursor: pointer;
-        padding: 0.5rem;
+        padding: 0.5rem 1rem;
         border: #2975D2 2px dotted;
         border-radius: 6px;
-        padding-left: 1rem;
-        padding-right: 1rem;
         font-size: smaller;
         width: 100%;
         text-align: center;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        display: block;
+        box-sizing: border-box;
+    }
+
+    #attach-file-button {
+        display: block;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
     }
 
     /* {% endif %} */
