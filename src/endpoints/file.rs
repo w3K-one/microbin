@@ -193,11 +193,17 @@ pub async fn get_file(
             );
             let file_path = PathBuf::from(file_path);
 
-            // This will stream the file and set the content type based on the
-            // file path
             let file_reponse = actix_files::NamedFile::open(file_path)?;
-            
-            let disposition = if query.get("preview").map(|s| s == "true").unwrap_or(false) {
+
+            let preview_requested = query.get("preview").map(|s| s == "true").unwrap_or(false);
+            let mime = mime_guess::from_path(pasta_file.name()).first_or_octet_stream();
+            let mime_str = mime.essence_str();
+            let safe_for_inline = mime_str.starts_with("image/")
+                || mime_str.starts_with("video/")
+                || mime_str.starts_with("audio/")
+                || mime_str == "application/pdf";
+
+            let disposition = if preview_requested && safe_for_inline {
                 header::DispositionType::Inline
             } else {
                 header::DispositionType::Attachment
@@ -209,9 +215,20 @@ pub async fn get_file(
                     pasta_file.name().to_string(),
                 )],
             });
-            // This takes care of streaming/seeking using the Range
-            // header in the request.
-            return Ok(file_reponse.into_response(&request));
+
+            let mut response = file_reponse.into_response(&request);
+            let headers = response.headers_mut();
+            headers.insert(
+                header::HeaderName::from_static("x-content-type-options"),
+                header::HeaderValue::from_static("nosniff"),
+            );
+            if preview_requested && safe_for_inline {
+                headers.insert(
+                    header::HeaderName::from_static("content-security-policy"),
+                    header::HeaderValue::from_static("sandbox; default-src 'none'"),
+                );
+            }
+            return Ok(response);
         }
     }
 
