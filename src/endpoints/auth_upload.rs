@@ -4,8 +4,10 @@ use crate::util::animalnumbers::to_u64;
 use crate::util::hashids::to_u64 as hashid_to_u64;
 use crate::util::misc::remove_expired;
 use crate::AppState;
-use actix_web::{get, web, HttpResponse};
+use actix_session::Session;
+use actix_web::{get, post, web, HttpResponse};
 use askama::Template;
+use serde::Deserialize;
 
 #[derive(Template)]
 #[template(path = "auth_upload.html")]
@@ -16,6 +18,47 @@ struct AuthPasta<'a> {
     encrypted_key: String,
     encrypt_client: bool,
     path: String,
+}
+
+#[derive(Template)]
+#[template(path = "auth_new.html")]
+struct AuthNewTemplate<'a> {
+    args: &'a Args,
+    status: String,
+}
+
+#[derive(Deserialize)]
+pub struct AuthNewForm {
+    pub password: String,
+}
+
+#[get("/auth/new")]
+pub async fn auth_new_get() -> HttpResponse {
+    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
+        AuthNewTemplate { args: &ARGS, status: String::new() }.render().unwrap(),
+    )
+}
+
+#[get("/auth/new/{status}")]
+pub async fn auth_new_get_with_status(param: web::Path<String>) -> HttpResponse {
+    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
+        AuthNewTemplate { args: &ARGS, status: param.into_inner() }.render().unwrap(),
+    )
+}
+
+#[post("/auth/new")]
+pub async fn auth_new_post(form: web::Form<AuthNewForm>, session: Session) -> HttpResponse {
+    if let Some(ref pwd) = ARGS.uploader_password {
+        if form.password.trim() == pwd.trim() {
+            session.insert("create_authed", true).ok();
+            return HttpResponse::Found()
+                .append_header(("Location", format!("{}/new", ARGS.public_path_as_str())))
+                .finish();
+        }
+    }
+    HttpResponse::Found()
+        .append_header(("Location", format!("{}/auth/new/incorrect", ARGS.public_path_as_str())))
+        .finish()
 }
 
 #[get("/auth/{id}")]

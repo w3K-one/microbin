@@ -39,10 +39,10 @@
         {% if args.title.as_ref().is_some() %}{{ args.title.as_ref().unwrap() }}{%- endif %}
     </b>
 
-    <a href="{{ args.public_path_as_str() }}/">New</a>
+    <a href="{{ args.public_path_as_str() }}/new">New</a>
 
     {% if !args.no_listing %}
-    <a href="{{ args.public_path_as_str() }}/list">List</a>
+    <a href="{{ args.public_path_as_str() }}/">List</a>
     {%- endif %}
 
     <a href="{{ args.public_path_as_str() }}/guide">Guide</a>

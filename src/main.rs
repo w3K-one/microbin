@@ -172,6 +172,9 @@ async fn main() -> std::io::Result<()> {
             .service(auth_upload::auth_raw_pasta)
             .service(auth_upload::auth_edit_private)
             .service(auth_upload::auth_remove_private)
+            .service(auth_upload::auth_new_get)
+            .service(auth_upload::auth_new_get_with_status)
+            .service(auth_upload::auth_new_post)
             // Protected services (wrapped with optional basic auth)
             .service(
                 web::scope("")
@@ -194,6 +197,7 @@ async fn main() -> std::io::Result<()> {
                     .service(admin::post_admin_logout)
                     .service(remove::remove)
                     .service(remove::post_remove)
+                    .service(list::list_redirect)
                     .service(list::list)
                     .service(web::resource("/upload").route(web::post().to(create::create)))
                     .service(create::index_with_status)

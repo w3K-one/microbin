@@ -8,7 +8,8 @@ use crate::AppState;
 use actix_multipart::Multipart;
 use actix_web::error::ErrorBadRequest;
 use actix_web::cookie::Cookie;
-use actix_web::{get, web, Error, HttpResponse, Responder};
+use actix_session::Session;
+use actix_web::{get, web, Error, HttpResponse};
 use askama::Template;
 use bytes::BytesMut;
 use bytesize::ByteSize;
@@ -27,8 +28,15 @@ struct IndexTemplate<'a> {
     max_expiry_index: usize,
 }
 
-#[get("/")]
-pub async fn index() -> impl Responder {
+#[get("/new")]
+pub async fn index(session: Session) -> HttpResponse {
+    if ARGS.uploader_password.is_some()
+        && session.get::<bool>("create_authed").unwrap_or(None) != Some(true)
+    {
+        return HttpResponse::Found()
+            .append_header(("Location", format!("{}/auth/new", ARGS.public_path_as_str())))
+            .finish();
+    }
     HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
         IndexTemplate {
             args: &ARGS,
@@ -41,11 +49,17 @@ pub async fn index() -> impl Responder {
     )
 }
 
-#[get("/{status}")]
-pub async fn index_with_status(param: web::Path<String>) -> HttpResponse {
+#[get("/new/{status}")]
+pub async fn index_with_status(param: web::Path<String>, session: Session) -> HttpResponse {
+    if ARGS.uploader_password.is_some()
+        && session.get::<bool>("create_authed").unwrap_or(None) != Some(true)
+    {
+        return HttpResponse::Found()
+            .append_header(("Location", format!("{}/auth/new", ARGS.public_path_as_str())))
+            .finish();
+    }
     let status = param.into_inner();
-
-    return HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
+    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
         IndexTemplate {
             args: &ARGS,
             status,
@@ -54,7 +68,7 @@ pub async fn index_with_status(param: web::Path<String>) -> HttpResponse {
         }
         .render()
         .unwrap(),
-    );
+    )
 }
 
 const EXPIRATION_OPTIONS: &[&str] = &[
@@ -116,7 +130,16 @@ pub fn is_valid_expiration(expiration: &str, max_expiry: &str) -> bool {
 pub async fn create(
     data: web::Data<AppState>,
     mut payload: Multipart,
+    session: Session,
 ) -> Result<HttpResponse, Error> {
+    if ARGS.uploader_password.is_some()
+        && session.get::<bool>("create_authed").unwrap_or(None) != Some(true)
+    {
+        return Ok(HttpResponse::Found()
+            .append_header(("Location", format!("{}/auth/new", ARGS.public_path_as_str())))
+            .finish());
+    }
+
     let timenow: i64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_secs(),
         Err(_) => {
@@ -347,15 +370,6 @@ pub async fn create(
         }
     }
 
-    if ARGS.readonly && ARGS.uploader_password.is_some() {
-        if uploader_password.trim() != ARGS.uploader_password.as_ref().unwrap().trim() {
-            log::warn!("Uploader password mismatch. Input length: {}, Expected length: {}", uploader_password.trim().len(), ARGS.uploader_password.as_ref().unwrap().trim().len());
-            return Ok(HttpResponse::Found()
-                .append_header(("Location", format!("{}/incorrect", ARGS.public_path_as_str())))
-                .finish());
-        }
-    }
-
     let id = new_pasta.id;
 
     if plain_key != *"" && new_pasta.readonly {
@@ -407,7 +421,7 @@ pub async fn create(
                 if let Some(ref existing_custom_url) = pasta.custom_url {
                     if existing_custom_url == custom_url {
                         return Ok(HttpResponse::Found()
-                            .append_header(("Location", "/url-already-exists"))
+                            .append_header(("Location", "/new/url-already-exists"))
                             .finish());
                     }
                 }
@@ -418,7 +432,7 @@ pub async fn create(
                 };
                 if &existing_slug == custom_url {
                     return Ok(HttpResponse::Found()
-                        .append_header(("Location", "/url-already-exists"))
+                        .append_header(("Location", "/new/url-already-exists"))
                         .finish());
                 }
             }

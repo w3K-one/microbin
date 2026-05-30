@@ -30,20 +30,21 @@ fn pastaresponse(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
+    let id_str = id.into_inner();
     let id = if ARGS.hash_ids {
-        hashid_to_u64(&id).unwrap_or(0)
+        hashid_to_u64(&id_str).unwrap_or(0)
     } else {
-        to_u64(&id.into_inner()).unwrap_or(0)
+        to_u64(&id_str).unwrap_or(0)
     };
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the index of the pasta in the collection based on u64 id
+    // find the index of the pasta in the collection based on u64 id or custom URL
     let mut index: usize = 0;
     let mut found: bool = false;
     for (i, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
+        if pasta.id == id || pasta.custom_url.as_deref() == Some(id_str.as_str()) {
             index = i;
             found = true;
             break;

@@ -16,10 +16,17 @@ struct ListTemplate<'a> {
 }
 
 #[get("/list")]
+pub async fn list_redirect() -> HttpResponse {
+    HttpResponse::MovedPermanently()
+        .append_header(("Location", "/"))
+        .finish()
+}
+
+#[get("/")]
 pub async fn list(data: web::Data<AppState>, session: Session) -> HttpResponse {
     if ARGS.no_listing {
         return HttpResponse::Found()
-            .append_header(("Location", format!("{}/", ARGS.public_path_as_str())))
+            .append_header(("Location", format!("{}/new", ARGS.public_path_as_str())))
             .finish();
     }
 
