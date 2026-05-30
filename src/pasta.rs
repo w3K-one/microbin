@@ -53,6 +53,11 @@ impl PastaFile {
         lowercase_name.ends_with(".html") || lowercase_name.ends_with(".htm")
     }
 
+    pub fn is_markdown(&self) -> bool {
+        let lowercase_name = self.name.to_lowercase();
+        lowercase_name.ends_with(".md") || lowercase_name.ends_with(".markdown")
+    }
+
     pub fn embeddable(&self) -> bool {
         self.is_image() || self.is_video()
     }

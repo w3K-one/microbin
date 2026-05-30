@@ -33,10 +33,10 @@ fn pastaresponse(
 
     // find the pasta by slug (custom URL or generated ID)
     if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
-        // Non-encrypted HTML file pastas: redirect directly to inline view
+        // Non-encrypted HTML/Markdown file pastas: redirect directly to inline view
         if password.is_empty() && !pastas[index].encrypt_server && !pastas[index].encrypt_client {
             if let Some(ref file) = pastas[index].file {
-                if file.is_html() {
+                if file.is_html() || file.is_markdown() {
                     return HttpResponse::Found()
                         .append_header(("Location", format!("/file/{}", slug)))
                         .finish();
