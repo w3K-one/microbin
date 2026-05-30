@@ -4,7 +4,7 @@ use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 use qrcode_generator::QrCodeEcc;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
-use std::path::Path;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::Pasta;
@@ -79,6 +79,36 @@ pub fn prune_all_expired(pastas: &mut Vec<Pasta>) {
             true
         }
     });
+
+    // Find and remove and attachment folders that 
+    // don't actually have an upload in the database pointing
+    // at them. Could be a result of an interrupted upload for example.
+
+    // Create a Set of valid IDs currently in the database
+    let valid_ids: std::collections::HashSet<String> = pastas
+        .iter()
+        .map(|p| p.id_as_animals())
+        .collect();
+
+    let attachments_path = format!("{}/attachments", ARGS.data_dir);
+    
+    if let Ok(entries) = fs::read_dir(&attachments_path) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    if let Some(dir_name) = entry.file_name().to_str() {
+                        // Found an orphaned upload folder
+                        if !valid_ids.contains(dir_name) {
+                            log::info!("Removing orphaned upload directory: {}", dir_name);
+                            if let Err(e) = fs::remove_dir_all(entry.path()) {
+                                log::error!("Failed to remove orphaned upload {}: {}", dir_name, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn string_to_qr_svg(str: &str) -> String {
@@ -128,11 +158,7 @@ pub fn encrypt_file(
     let ciphertext = mc.encrypt_bytes_to_bytes(&input_data[..]);
 
     // Write the encrypted data to a new file with the .enc extension
-    let mut f = File::create(
-        Path::new(input_file_path)
-            .with_file_name("data")
-            .with_extension("enc"),
-    )?;
+    let mut f = File::create(format!("{}.enc", input_file_path))?;
     f.write_all(ciphertext.as_slice())?;
 
     // Delete the original input file

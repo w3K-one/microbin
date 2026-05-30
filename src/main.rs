@@ -2,7 +2,7 @@ extern crate core;
 
 use crate::args::ARGS;
 use crate::endpoints::{
-    admin, api, auth_admin, auth_upload, create, edit, errors, file, guide, list,
+    admin, archive, auth_admin, auth_upload, create, edit, errors, file, guide, list,
     pasta as pasta_endpoint, qr, remove, static_resources,
 };
 use crate::pasta::Pasta;
@@ -68,7 +68,7 @@ pub mod util {
 
 pub mod endpoints {
     pub mod admin;
-    pub mod api;
+    pub mod archive;
     pub mod auth_admin;
     pub mod auth_upload;
     pub mod create;
@@ -144,12 +144,25 @@ async fn main() -> std::io::Result<()> {
                     .build(),
             )
             .wrap(middleware::NormalizePath::trim())
-            .service(create::index)
+            .wrap(
+                middleware::Logger::new(r#"%{r}a "%r" %s %b "%{Referer}i" "%{User-Agent}i" %T"#)
+            )
+            // Public services (no auth required)
+            .service(pasta_endpoint::getpasta)
+            .service(pasta_endpoint::postpasta)
+            .service(pasta_endpoint::getshortpasta)
+            .service(pasta_endpoint::postshortpasta)
+            .service(pasta_endpoint::getrawpasta)
+            .service(pasta_endpoint::postrawpasta)
+            .service(pasta_endpoint::redirecturl)
+            .service(pasta_endpoint::shortredirecturl)
+            .service(qr::getqr)
+            .service(file::get_file)
+            .service(archive::get_archive)
+            .service(file::post_secure_file)
+            .service(static_resources::static_resources)
             .service(guide::guide)
-            .service(api::check_url_availability)
-            .service(auth_admin::auth_admin)
             .service(auth_upload::auth_file_with_status)
-            .service(auth_admin::auth_admin_with_status)
             .service(auth_upload::auth_upload_with_status)
             .service(auth_upload::auth_raw_pasta_with_status)
             .service(auth_upload::auth_edit_private_with_status)
@@ -159,39 +172,33 @@ async fn main() -> std::io::Result<()> {
             .service(auth_upload::auth_raw_pasta)
             .service(auth_upload::auth_edit_private)
             .service(auth_upload::auth_remove_private)
-            .service(pasta_endpoint::getpasta)
-            .service(pasta_endpoint::postpasta)
-            .service(pasta_endpoint::getshortpasta)
-            .service(pasta_endpoint::postshortpasta)
-            .service(pasta_endpoint::getrawpasta)
-            .service(pasta_endpoint::postrawpasta)
-            .service(pasta_endpoint::redirecturl)
-            .service(pasta_endpoint::shortredirecturl)
-            .service(edit::get_edit)
-            .service(edit::get_edit_with_status)
-            .service(edit::post_edit)
-            .service(edit::post_edit_private)
-            .service(edit::post_submit_edit_private)
-            .service(admin::get_admin)
-            .service(admin::post_admin)
-            .service(admin::post_admin_prune)
-            .service(admin::post_admin_logout)
-            .service(static_resources::static_resources)
-            .service(qr::getqr)
-            .service(file::get_file)
-            .service(file::post_secure_file)
-            .service(web::resource("/upload").route(web::post().to(create::create)))
+            // Protected services (wrapped with optional basic auth)
+            .service(
+                web::scope("")
+                    .wrap(Condition::new(
+                        ARGS.auth_basic_username.is_some()
+                            && ARGS.auth_basic_username.as_ref().unwrap().trim() != "",
+                        HttpAuthentication::basic(util::auth::auth_validator),
+                    ))
+                    .service(create::index)
+                    .service(auth_admin::auth_admin)
+                    .service(auth_admin::auth_admin_with_status)
+                    .service(edit::get_edit)
+                    .service(edit::get_edit_with_status)
+                    .service(edit::post_edit)
+                    .service(edit::post_edit_private)
+                    .service(edit::post_submit_edit_private)
+                    .service(admin::get_admin)
+                    .service(admin::post_admin)
+                    .service(admin::post_admin_prune)
+                    .service(admin::post_admin_logout)
+                    .service(remove::remove)
+                    .service(remove::post_remove)
+                    .service(list::list)
+                    .service(web::resource("/upload").route(web::post().to(create::create)))
+                    .service(create::index_with_status)
+            )
             .default_service(web::route().to(errors::not_found))
-            .wrap(middleware::Logger::default())
-            .service(remove::remove)
-            .service(remove::post_remove)
-            .service(list::list)
-            .service(create::index_with_status)
-            .wrap(Condition::new(
-                ARGS.auth_basic_username.is_some()
-                    && ARGS.auth_basic_username.as_ref().unwrap().trim() != "",
-                HttpAuthentication::basic(util::auth::auth_validator),
-            ))
     })
     .bind((ARGS.bind, ARGS.port))?
     .workers(ARGS.threads as usize)

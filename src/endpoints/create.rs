@@ -1,13 +1,16 @@
-use crate::pasta::PastaFile;
+use crate::pasta::{Pasta, PastaFile};
 use crate::util::animalnumbers::to_animal_names;
 use crate::util::db::insert;
 use crate::util::hashids::to_hashids;
 use crate::util::misc::{encrypt, encrypt_file, is_valid_url};
-use crate::{AppState, Pasta, ARGS};
+use crate::args::{Args, ARGS};
+use crate::AppState;
 use actix_multipart::Multipart;
 use actix_web::error::ErrorBadRequest;
+use actix_web::cookie::Cookie;
 use actix_web::{get, web, Error, HttpResponse, Responder};
 use askama::Template;
+use bytes::BytesMut;
 use bytesize::ByteSize;
 use futures::TryStreamExt;
 use log::warn;
@@ -18,16 +21,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexTemplate<'a> {
-    args: &'a ARGS,
+    args: &'a Args,
     status: String,
+    default_privacy_value: String,
+    max_expiry_index: usize,
 }
 
 #[get("/")]
 pub async fn index() -> impl Responder {
-    HttpResponse::Ok().content_type("text/html").body(
+    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
         IndexTemplate {
             args: &ARGS,
             status: String::from(""),
+            default_privacy_value: ARGS.default_privacy.as_ref().map_or_else(|| String::from("public"), |s| s.clone()),
+            max_expiry_index: ARGS.max_expiry_index(),
         }
         .render()
         .unwrap(),
@@ -38,15 +45,34 @@ pub async fn index() -> impl Responder {
 pub async fn index_with_status(param: web::Path<String>) -> HttpResponse {
     let status = param.into_inner();
 
-    return HttpResponse::Ok().content_type("text/html").body(
+    return HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
         IndexTemplate {
             args: &ARGS,
             status,
+            default_privacy_value: ARGS.default_privacy.as_ref().map_or_else(|| String::from("public"), |s| s.clone()),
+            max_expiry_index: ARGS.max_expiry_index(),
         }
         .render()
         .unwrap(),
     );
 }
+
+const EXPIRATION_OPTIONS: &[&str] = &[
+    "1min",
+    "10min",
+    "1hour",
+    "24hour",
+    "3days",
+    "1week",
+    "1month",
+    "6months",
+    "1year",
+    "2years",
+    "4years",
+    "8years",
+    "16years",
+    "never",
+];
 
 pub fn expiration_to_timestamp(expiration: &str, timenow: i64) -> i64 {
     match expiration {
@@ -56,6 +82,13 @@ pub fn expiration_to_timestamp(expiration: &str, timenow: i64) -> i64 {
         "24hour" => timenow + 60 * 60 * 24,
         "3days" => timenow + 60 * 60 * 24 * 3,
         "1week" => timenow + 60 * 60 * 24 * 7,
+        "1month" => timenow + 60 * 60 * 24 * 30,
+        "6months" => timenow + 60 * 60 * 24 * 30 * 6,
+        "1year" => timenow + 60 * 60 * 24 * 365,
+        "2years" => timenow + 60 * 60 * 24 * 365 * 2,
+        "4years" => timenow + 60 * 60 * 24 * 365 * 4,
+        "8years" => timenow + 60 * 60 * 24 * 365 * 8,
+        "16years" => timenow + 60 * 60 * 24 * 365 * 16,
         "never" => {
             if ARGS.eternal_pasta {
                 0
@@ -70,16 +103,16 @@ pub fn expiration_to_timestamp(expiration: &str, timenow: i64) -> i64 {
     }
 }
 
-/// receives a file through http Post on url /upload/a-b-c with a, b and c
-/// different animals. The client sends the post in response to a form.
-// TODO: form field order might need to be changed. In my testing the attachment 
-// data is nestled between password encryption key etc <21-10-24, dvdsk> 
+pub fn is_valid_expiration(expiration: &str, max_expiry: &str) -> bool {
+    let max_index = EXPIRATION_OPTIONS.iter().position(|&x| x == max_expiry).unwrap_or(5);
+    let current_index = EXPIRATION_OPTIONS.iter().position(|&x| x == expiration).unwrap_or(0);
+    current_index <= max_index
+}
+
 pub async fn create(
     data: web::Data<AppState>,
     mut payload: Multipart,
 ) -> Result<HttpResponse, Error> {
-    let mut pastas = data.pastas.lock().unwrap();
-
     let timenow: i64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_secs(),
         Err(_) => {
@@ -106,6 +139,7 @@ pub async fn create(
         pasta_type: String::from(""),
         expiration: expiration_to_timestamp(&ARGS.default_expiry, timenow),
         custom_url: None,
+        attachments: None,
         expired: false,
         expired_at: 0,
     };
@@ -140,7 +174,7 @@ pub async fn create(
                         _ => true,
                     };
                     new_pasta.readonly = match privacy {
-                        "readonly" => true,
+                        "readonly" if ARGS.enable_readonly => true,
                         _ => false,
                     };
                     new_pasta.encrypt_client = match privacy {
@@ -168,19 +202,22 @@ pub async fn create(
                 continue;
             }
             "expiration" => {
+                let mut expiration_str = String::new();
                 while let Some(chunk) = field.try_next().await? {
-                    new_pasta.expiration =
-                        expiration_to_timestamp(std::str::from_utf8(&chunk).unwrap(), timenow);
+                    expiration_str = std::str::from_utf8(&chunk).unwrap().to_string();
                 }
 
+                if !is_valid_expiration(&expiration_str, &ARGS.max_expiry) {
+                    return Err(ErrorBadRequest("Expiration exceeds maximum allowed"));
+                }
+
+                new_pasta.expiration = expiration_to_timestamp(&expiration_str, timenow);
                 continue;
             }
             "burn_after" => {
                 while let Some(chunk) = field.try_next().await? {
                     new_pasta.burn_after_reads = match std::str::from_utf8(&chunk).unwrap() {
-                        // give an extra read because the user will be
-                        // redirected to the pasta page automatically
-                        "1" => 2,
+                        "1" => 1,
                         "10" => 10,
                         "100" => 100,
                         "1000" => 1000,
@@ -196,13 +233,13 @@ pub async fn create(
                 continue;
             }
             "content" => {
-                let mut content = String::from("");
+                let mut buf = BytesMut::new();
                 while let Some(chunk) = field.try_next().await? {
-                    content.push_str(std::str::from_utf8(&chunk).unwrap().to_string().as_str());
+                    buf.extend_from_slice(&chunk);
                 }
-                if !content.is_empty() {
-                    new_pasta.content = content;
-
+                if !buf.is_empty() {
+                    new_pasta.content = String::from_utf8(buf.to_vec())
+                        .map_err(|_| ErrorBadRequest("Invalid UTF-8 in content"))?;
                     new_pasta.pasta_type = if is_valid_url(new_pasta.content.as_str()) {
                         String::from("url")
                     } else {
@@ -256,12 +293,16 @@ pub async fn create(
                     }
                 };
 
-                std::fs::create_dir_all(format!(
+                if let Err(e) = std::fs::create_dir_all(format!(
                     "{}/attachments/{}",
                     ARGS.data_dir,
                     &new_pasta.id_as_animals()
-                ))
-                .unwrap();
+                )) {
+                    log::error!("Failed to create directory: {}", e);
+                    return Err(actix_web::error::ErrorInternalServerError(
+                        "Failed to create attachment directory",
+                    ));
+                }
 
                 let filepath = format!(
                     "{}/attachments/{}/{}",
@@ -285,7 +326,15 @@ pub async fn create(
 
                 file.size = ByteSize::b(size as u64);
 
-                new_pasta.file = Some(file);
+                if new_pasta.file.is_none() {
+                    new_pasta.file = Some(file);
+                } else {
+                    if new_pasta.attachments.is_none() {
+                        new_pasta.attachments = Some(Vec::new());
+                    }
+                    new_pasta.attachments.as_mut().unwrap().push(file);
+                }
+                
                 new_pasta.pasta_type = String::from("text");
             }
             field => {
@@ -295,9 +344,10 @@ pub async fn create(
     }
 
     if ARGS.readonly && ARGS.uploader_password.is_some() {
-        if uploader_password != ARGS.uploader_password.as_ref().unwrap().to_owned() {
+        if uploader_password.trim() != ARGS.uploader_password.as_ref().unwrap().trim() {
+            log::warn!("Uploader password mismatch. Input length: {}, Expected length: {}", uploader_password.trim().len(), ARGS.uploader_password.as_ref().unwrap().trim().len());
             return Ok(HttpResponse::Found()
-                .append_header(("Location", "/incorrect"))
+                .append_header(("Location", format!("{}/incorrect", ARGS.public_path_as_str())))
                 .finish());
         }
     }
@@ -316,78 +366,101 @@ pub async fn create(
         }
     }
 
-    if new_pasta.file.is_some() && new_pasta.encrypt_server && !new_pasta.readonly {
-        let filepath = format!(
-            "{}/attachments/{}/{}",
-            ARGS.data_dir,
-            &new_pasta.id_as_animals(),
-            &new_pasta.file.as_ref().unwrap().name()
-        );
-        if new_pasta.encrypt_client {
-            encrypt_file(&random_key, &filepath).expect("Failed to encrypt file with random key")
-        } else {
-            encrypt_file(&plain_key, &filepath).expect("Failed to encrypt file with plain key")
+    if new_pasta.encrypt_server && !new_pasta.readonly {
+        let mut files_to_encrypt: Vec<&PastaFile> = Vec::new();
+        if let Some(file) = &new_pasta.file {
+            files_to_encrypt.push(file);
+        }
+        if let Some(attachments) = &new_pasta.attachments {
+            for attachment in attachments {
+                files_to_encrypt.push(attachment);
+            }
+        }
+
+        for file in files_to_encrypt {
+             let filepath = format!(
+                "{}/attachments/{}/{}",
+                ARGS.data_dir,
+                &new_pasta.id_as_animals(),
+                &file.name()
+            );
+            if new_pasta.encrypt_client {
+                encrypt_file(&random_key, &filepath).expect("Failed to encrypt file with random key")
+            } else {
+                encrypt_file(&plain_key, &filepath).expect("Failed to encrypt file with plain key")
+            }
         }
     }
 
     let encrypt_server = new_pasta.encrypt_server;
 
-    // Check if custom URL conflicts with existing pastas
-    if let Some(ref custom_url) = new_pasta.custom_url {
-        for pasta in pastas.iter() {
-            // Check against other custom URLs
-            if let Some(ref existing_custom_url) = pasta.custom_url {
-                if existing_custom_url == custom_url {
+    let slug = {
+        let mut pastas = data.pastas.lock().unwrap();
+
+        // Check if custom URL conflicts with existing pastas
+        if let Some(ref custom_url) = new_pasta.custom_url {
+            for pasta in pastas.iter() {
+                if let Some(ref existing_custom_url) = pasta.custom_url {
+                    if existing_custom_url == custom_url {
+                        return Ok(HttpResponse::Found()
+                            .append_header(("Location", "/url-already-exists"))
+                            .finish());
+                    }
+                }
+                let existing_slug = if ARGS.hash_ids {
+                    to_hashids(pasta.id)
+                } else {
+                    to_animal_names(pasta.id)
+                };
+                if &existing_slug == custom_url {
                     return Ok(HttpResponse::Found()
                         .append_header(("Location", "/url-already-exists"))
                         .finish());
                 }
             }
-            // Check against generated slugs to avoid conflicts
-            let existing_slug = if ARGS.hash_ids {
-                to_hashids(pasta.id)
-            } else {
-                to_animal_names(pasta.id)
-            };
-            if &existing_slug == custom_url {
-                return Ok(HttpResponse::Found()
-                    .append_header(("Location", "/url-already-exists"))
-                    .finish());
-            }
         }
-    }
 
-    pastas.push(new_pasta);
-
-    for (_, pasta) in pastas.iter().enumerate() {
-        if pasta.id == id {
-            insert(Some(&pastas), Some(pasta));
-        }
-    }
-
-    // Use custom URL if provided, otherwise generate slug
-    let slug = pastas
-        .iter()
-        .find(|p| p.id == id)
-        .and_then(|p| p.custom_url.clone())
-        .unwrap_or_else(|| {
-            if ARGS.hash_ids {
-                to_hashids(id)
-            } else {
-                to_animal_names(id)
-            }
+        let slug = new_pasta.custom_url.clone().unwrap_or_else(|| {
+            if ARGS.hash_ids { to_hashids(id) } else { to_animal_names(id) }
         });
+
+        pastas.push(new_pasta);
+
+        for (_, pasta) in pastas.iter().enumerate() {
+            if pasta.id == id {
+                insert(Some(&pastas), Some(pasta));
+            }
+        }
+
+        slug
+    };
 
     if encrypt_server {
         Ok(HttpResponse::Found()
-            .append_header(("Location", format!("/auth/{}/success", slug)))
+            .append_header(("Location", format!("{}/auth/{}/success", ARGS.public_path_as_str(), slug)))
             .finish())
     } else {
+        // Generate time-limited token for initial view using Hashids
+        let timenow = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let expiry = timenow + 15; // 15 seconds validity
+        
+        // Use global HARSH instance
+        let encoded_token = crate::util::hashids::HARSH.encode(&[expiry, id]);
+
         Ok(HttpResponse::Found()
             .append_header((
                 "Location",
                 format!("{}/upload/{}", ARGS.public_path_as_str(), slug),
             ))
+            .cookie(
+                Cookie::build("owner_token", encoded_token)
+                    .path("/")
+                    .max_age(actix_web::cookie::time::Duration::seconds(15))
+                    .finish(),
+            )
             .finish())
     }
 }

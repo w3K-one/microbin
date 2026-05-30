@@ -5,6 +5,7 @@ use std::convert::Infallible;
 use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
+use crate::fs;
 
 lazy_static! {
     pub static ref ARGS: Args = Args::parse();
@@ -14,18 +15,18 @@ lazy_static! {
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
     #[clap(long, env = "MICROBIN_BASIC_AUTH_USERNAME")]
-    pub auth_basic_username: Option<String>,
+    pub auth_basic_username: Option<SecretArg>,
 
     #[clap(long, env = "MICROBIN_BASIC_AUTH_PASSWORD")]
-    pub auth_basic_password: Option<String>,
+    pub auth_basic_password: Option<SecretArg>,
 
     #[clap(long, env = "MICROBIN_ADMIN_USERNAME", default_value = "admin")]
-    pub auth_admin_username: String,
+    pub auth_admin_username: SecretArg,
 
     #[clap(long, env = "MICROBIN_ADMIN_PASSWORD", default_value = "m1cr0b1n")]
-    pub auth_admin_password: String,
+    pub auth_admin_password: SecretArg,
 
-    #[clap(long, env = "MICROBIN_EDITABLE")]
+    #[clap(long, env = "MICROBIN_EDITABLE", action = clap::ArgAction::Set, default_value_t = true)]
     pub editable: bool,
 
     #[clap(long, env = "MICROBIN_FOOTER_TEXT")]
@@ -43,7 +44,7 @@ pub struct Args {
     #[clap(long, env = "MICROBIN_NO_LISTING")]
     pub no_listing: bool,
 
-    #[clap(long, env = "MICROBIN_HIGHLIGHTSYNTAX")]
+    #[clap(long, env = "MICROBIN_HIGHLIGHTSYNTAX", action = clap::ArgAction::Set, default_value_t = true)]
     pub highlightsyntax: bool,
 
     #[clap(short, long, env = "MICROBIN_PORT", default_value_t = 8080)]
@@ -52,7 +53,7 @@ pub struct Args {
     #[clap(short, long, env="MICROBIN_BIND", default_value_t = IpAddr::from([0, 0, 0, 0]))]
     pub bind: IpAddr,
 
-    #[clap(long, env = "MICROBIN_PRIVATE")]
+    #[clap(long, env = "MICROBIN_PRIVATE", action = clap::ArgAction::Set, default_value_t = true)]
     pub private: bool,
 
     #[clap(long, env = "MICROBIN_PURE_HTML")]
@@ -68,12 +69,12 @@ pub struct Args {
     pub short_path: Option<PublicUrl>,
 
     #[clap(long, env = "MICROBIN_UPLOADER_PASSWORD")]
-    pub uploader_password: Option<String>,
+    pub uploader_password: Option<SecretArg>,
 
     #[clap(long, env = "MICROBIN_READONLY")]
     pub readonly: bool,
 
-    #[clap(long, env = "MICROBIN_SHOW_READ_STATS")]
+    #[clap(long, env = "MICROBIN_SHOW_READ_STATS", action = clap::ArgAction::Set, default_value_t = true)]
     pub show_read_stats: bool,
 
     #[clap(long, env = "MICROBIN_TITLE")]
@@ -85,7 +86,7 @@ pub struct Args {
     #[clap(short, long, env = "MICROBIN_GC_DAYS", default_value_t = 90)]
     pub gc_days: u16,
 
-    #[clap(long, env = "MICROBIN_ENABLE_BURN_AFTER")]
+    #[clap(long, env = "MICROBIN_ENABLE_BURN_AFTER", action = clap::ArgAction::Set, default_value_t = true)]
     pub enable_burn_after: bool,
 
     #[clap(short, long, env = "MICROBIN_DEFAULT_BURN_AFTER", default_value_t = 0)]
@@ -100,11 +101,14 @@ pub struct Args {
     #[clap(long, env = "MICROBIN_ETERNAL_PASTA", default_value_t = true)]
     pub eternal_pasta: bool,
 
-    #[clap(long, env = "MICROBIN_ENABLE_READONLY")]
+    #[clap(long, env = "MICROBIN_ENABLE_READONLY", action = clap::ArgAction::Set, default_value_t = true)]
     pub enable_readonly: bool,
 
     #[clap(long, env = "MICROBIN_DEFAULT_EXPIRY", default_value = "never")]
     pub default_expiry: String,
+
+    #[clap(long, env = "MICROBIN_MAX_EXPIRY", default_value = "1week")]
+    pub max_expiry: String,
 
     #[clap(long, env = "MICROBIN_DATA_DIR", default_value = "microbin_data")]
     pub data_dir: String,
@@ -127,11 +131,14 @@ pub struct Args {
     #[clap(long, env = "MICROBIN_DISABLE_UPDATE_CHECKING")]
     pub disable_update_checking: bool,
 
-    #[clap(long, env = "MICROBIN_ENCRYPTION_CLIENT_SIDE")]
+    #[clap(long, env = "MICROBIN_ENCRYPTION_CLIENT_SIDE", action = clap::ArgAction::Set, default_value_t = true)]
     pub encryption_client_side: bool,
 
-    #[clap(long, env = "MICROBIN_ENCRYPTION_SERVER_SIDE")]
+    #[clap(long, env = "MICROBIN_ENCRYPTION_SERVER_SIDE", action = clap::ArgAction::Set, default_value_t = true)]
     pub encryption_server_side: bool,
+
+    #[clap(long, env = "MICROBIN_DEFAULT_PRIVACY")]
+    pub default_privacy: Option<String>,
 
     #[clap(
         long,
@@ -146,6 +153,11 @@ pub struct Args {
         default_value_t = 2048
     )]
     pub max_file_size_unencrypted_mb: usize,
+
+
+
+    #[clap(long, env = "MICROBIN_DEFAULT_VIEW", default_value = "gallery")]
+    pub default_view: String,
 }
 
 impl Args {
@@ -167,12 +179,32 @@ impl Args {
         }
     }
 
+    pub fn max_expiry_index(&self) -> usize {
+        let options = &[
+            "1min",
+            "10min",
+            "1hour",
+            "24hour",
+            "3days",
+            "1week",
+            "1month",
+            "6months",
+            "1year",
+            "2years",
+            "4years",
+            "8years",
+            "16years",
+            "never",
+        ];
+        options.iter().position(|&x| x == self.max_expiry).unwrap_or(5)
+    }
+
     pub fn without_secrets(self) -> Args {
         Args {
             auth_basic_username: None,
             auth_basic_password: None,
-            auth_admin_username: String::from(""),
-            auth_admin_password: String::from(""),
+            auth_admin_username: crate::args::SecretArg(String::from("")),
+            auth_admin_password: crate::args::SecretArg(String::from("")),
             editable: self.editable,
             footer_text: self.footer_text,
             hide_footer: self.hide_footer,
@@ -201,6 +233,7 @@ impl Args {
             eternal_pasta: self.eternal_pasta,
             enable_readonly: self.enable_readonly,
             default_expiry: self.default_expiry,
+            max_expiry: self.max_expiry,
             data_dir: String::from(""),
             no_file_upload: self.no_file_upload,
             custom_css: self.custom_css,
@@ -208,9 +241,12 @@ impl Args {
             disable_telemetry: self.disable_telemetry,
             encryption_client_side: self.encryption_client_side,
             encryption_server_side: self.encryption_server_side,
+            default_privacy: None,
             max_file_size_encrypted_mb: self.max_file_size_encrypted_mb,
             max_file_size_unencrypted_mb: self.max_file_size_unencrypted_mb,
             disable_update_checking: self.disable_update_checking,
+
+            default_view: self.default_view,
         }
     }
 }
@@ -221,6 +257,33 @@ pub struct PublicUrl(pub String);
 impl fmt::Display for PublicUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecretArg(pub String);
+
+impl FromStr for SecretArg {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(path) = s.strip_prefix("file://").or_else(|| s.strip_prefix("file:")) {
+            // Read value from file
+            fs::read_to_string(path)
+                .map(|content| SecretArg(content.trim().to_string()))
+                .map_err(|e| format!("Failed to read secret from {}: {}", path, e))
+        } else {
+            // Use the raw string provided
+            Ok(SecretArg(s.to_string()))
+        }
+    }
+}
+
+// Allow it to be treated like a string automatically
+impl std::ops::Deref for SecretArg {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

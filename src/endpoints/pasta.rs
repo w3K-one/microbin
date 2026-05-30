@@ -1,14 +1,17 @@
 use crate::args::{Args, ARGS};
 use crate::endpoints::errors::ErrorTemplate;
 use crate::pasta::Pasta;
+use crate::util::animalnumbers::to_u64;
 use crate::util::auth;
 use crate::util::db::update;
-use crate::util::misc::{find_pasta_by_slug, remove_expired};
+use crate::util::hashids::to_u64 as hashid_to_u64;
+use crate::util::misc::remove_expired;
 use crate::AppState;
 use actix_multipart::Multipart;
-use actix_web::{get, post, web, Error, HttpResponse};
+use actix_web::{get, post, web, Error, HttpRequest, HttpResponse};
 use askama::Template;
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Template)]
@@ -22,42 +25,48 @@ fn pastaresponse(
     data: web::Data<AppState>,
     id: web::Path<String>,
     password: String,
+    skip_increment: bool,
 ) -> HttpResponse {
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let slug = id.into_inner();
+    let id = if ARGS.hash_ids {
+        hashid_to_u64(&id).unwrap_or(0)
+    } else {
+        to_u64(&id.into_inner()).unwrap_or(0)
+    };
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the pasta by slug (custom URL or generated ID)
-    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
-        // Non-encrypted HTML/Markdown file pastas: redirect directly to inline view
-        if password.is_empty() && !pastas[index].encrypt_server && !pastas[index].encrypt_client {
-            if let Some(ref file) = pastas[index].file {
-                if file.is_html() || file.is_markdown() {
-                    return HttpResponse::Found()
-                        .append_header(("Location", format!("/file/{}", slug)))
-                        .finish();
-                }
-            }
+    // find the index of the pasta in the collection based on u64 id
+    let mut index: usize = 0;
+    let mut found: bool = false;
+    for (i, pasta) in pastas.iter().enumerate() {
+        if pasta.id == id {
+            index = i;
+            found = true;
+            break;
         }
+    }
 
+    if found {
         if pastas[index].encrypt_server && password == *"" {
             return HttpResponse::Found()
                 .append_header((
                     "Location",
-                    format!("/auth/{}", slug),
+                    format!("{}/auth/{}", ARGS.public_path_as_str(), pastas[index].id_as_animals()),
                 ))
                 .finish();
         }
 
-        // increment read count
-        pastas[index].read_count += 1;
+        if !skip_increment {
+            // increment read count
+            pastas[index].read_count += 1;
 
-        // save the updated read count
-        update(Some(&pastas), Some(&pastas[index]));
+            // save the updated read count
+            update(Some(&pastas), Some(&pastas[index]));
+        }
 
         let original_content = pastas[index].content.to_owned();
 
@@ -72,14 +81,14 @@ fn pastaresponse(
                 return HttpResponse::Found()
                     .append_header((
                         "Location",
-                        format!("/auth/{}/incorrect", slug),
+                        format!("{}/auth/{}/incorrect", ARGS.public_path_as_str(), pastas[index].id_as_animals()),
                     ))
                     .finish();
             }
         }
 
         // serve pasta in template
-        let response = HttpResponse::Ok().content_type("text/html").body(
+        let response = HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
             PastaTemplate {
                 pasta: &pastas[index],
                 args: &ARGS,
@@ -112,7 +121,7 @@ fn pastaresponse(
 
     // otherwise send pasta not found error
     HttpResponse::Ok()
-        .content_type("text/html")
+        .content_type("text/html; charset=utf-8")
         .body(ErrorTemplate { args: &ARGS }.render().unwrap())
 }
 
@@ -123,7 +132,7 @@ pub async fn postpasta(
     payload: Multipart,
 ) -> Result<HttpResponse, Error> {
     let password = auth::password_from_multipart(payload).await?;
-    Ok(pastaresponse(data, id, password))
+    Ok(pastaresponse(data, id, password, false))
 }
 
 #[post("/p/{id}")]
@@ -133,30 +142,87 @@ pub async fn postshortpasta(
     payload: Multipart,
 ) -> Result<HttpResponse, Error> {
     let password = auth::password_from_multipart(payload).await?;
-    Ok(pastaresponse(data, id, password))
+    Ok(pastaresponse(data, id, password, false))
 }
 
 #[get("/upload/{id}")]
-pub async fn getpasta(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse {
-    pastaresponse(data, id, String::from(""))
+pub async fn getpasta(
+    data: web::Data<AppState>,
+    id: web::Path<String>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let mut skip_increment = false;
+
+    // the user attached an owner_token. likely they're the same user that created the pasta
+    // but let's verify it just in case
+    if let Some(cookie) = req.cookie("owner_token") {
+        if verify_owner_token(cookie.value(), &id) {
+            // yay, it really is the same user and their cookie isn't expired
+            // so let's skip incrementing the read count
+            skip_increment = true;
+        }
+    }
+
+    pastaresponse(data, id, String::from(""), skip_increment)
+}
+
+// when creating a pasta, the owner is issued a token with a 15-second expiration
+// this token is used to avoid incrementing the read count of the pasta when the owner views it
+fn verify_owner_token(token: &str, id: &str) -> bool {
+    // decode the token
+    if let Ok(numbers) = crate::util::hashids::HARSH.decode(token) {
+        if numbers.len() == 2 {
+            let expiry = numbers[0];
+            let token_id = numbers[1];
+            let timenow = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+            // verify the token is valid
+            let target_id = if ARGS.hash_ids {
+                hashid_to_u64(id).unwrap_or(0)
+            } else {
+                to_u64(id).unwrap_or(0)
+            };
+
+            if token_id == target_id && expiry > timenow {
+                // yay, it's valid
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[get("/p/{id}")]
 pub async fn getshortpasta(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse {
-    pastaresponse(data, id, String::from(""))
+    pastaresponse(data, id, String::from(""), false)
 }
 
 fn urlresponse(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse {
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let slug = id.into_inner();
+    let id = if ARGS.hash_ids {
+        hashid_to_u64(&id).unwrap_or(0)
+    } else {
+        to_u64(&id.into_inner()).unwrap_or(0)
+    };
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the pasta by slug (custom URL or generated ID)
-    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+    // find the index of the pasta in the collection based on u64 id
+    let mut index: usize = 0;
+    let mut found: bool = false;
+
+    for (i, pasta) in pastas.iter().enumerate() {
+        if pasta.id == id {
+            index = i;
+            found = true;
+            break;
+        }
+    }
+
+    if found {
         // increment read count
         pastas[index].read_count += 1;
 
@@ -187,15 +253,15 @@ fn urlresponse(data: web::Data<AppState>, id: web::Path<String>) -> HttpResponse
             return response;
         // send error if we're trying to open a non-url pasta as a redirect
         } else {
-            HttpResponse::Ok()
-                .content_type("text/html")
+            return HttpResponse::Ok()
+                .content_type("text/html; charset=utf-8")
                 .body(ErrorTemplate { args: &ARGS }.render().unwrap());
         }
     }
 
     // otherwise send pasta not found error
     HttpResponse::Ok()
-        .content_type("text/html")
+        .content_type("text/html; charset=utf-8")
         .body(ErrorTemplate { args: &ARGS }.render().unwrap())
 }
 
@@ -217,18 +283,32 @@ pub async fn getrawpasta(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let slug = id.into_inner();
+    let id = if ARGS.hash_ids {
+        hashid_to_u64(&id).unwrap_or(0)
+    } else {
+        to_u64(&id.into_inner()).unwrap_or(0)
+    };
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the pasta by slug (custom URL or generated ID)
-    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+    // find the index of the pasta in the collection based on u64 id
+    let mut index: usize = 0;
+    let mut found: bool = false;
+    for (i, pasta) in pastas.iter().enumerate() {
+        if pasta.id == id {
+            index = i;
+            found = true;
+            break;
+        }
+    }
+
+    if found {
         if pastas[index].encrypt_server {
             return Ok(HttpResponse::Found()
                 .append_header((
                     "Location",
-                    format!("/auth_raw/{}", slug),
+                    format!("{}/auth_raw/{}", ARGS.public_path_as_str(), pastas[index].id_as_animals()),
                 ))
                 .finish());
         }
@@ -252,7 +332,7 @@ pub async fn getrawpasta(
         pastas[index].last_read = timenow;
 
         // send raw content of pasta
-        let response = Ok(HttpResponse::NotFound()
+        let response = Ok(HttpResponse::Ok()
             .content_type("text/plain; charset=utf-8")
             .body(pastas[index].content.to_owned()));
 
@@ -261,7 +341,7 @@ pub async fn getrawpasta(
 
     // otherwise send pasta not found error as raw text
     Ok(HttpResponse::NotFound()
-        .content_type("text/html")
+        .content_type("text/html; charset=utf-8")
         .body(String::from("Upload not found! :-(")))
 }
 
@@ -276,18 +356,32 @@ pub async fn postrawpasta(
     // get access to the pasta collection
     let mut pastas = data.pastas.lock().unwrap();
 
-    let slug = id.into_inner();
+    let id = if ARGS.hash_ids {
+        hashid_to_u64(&id).unwrap_or(0)
+    } else {
+        to_u64(&id.into_inner()).unwrap_or(0)
+    };
 
     // remove expired pastas (including this one if needed)
     remove_expired(&mut pastas);
 
-    // find the pasta by slug (custom URL or generated ID)
-    if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+    // find the index of the pasta in the collection based on u64 id
+    let mut index: usize = 0;
+    let mut found: bool = false;
+    for (i, pasta) in pastas.iter().enumerate() {
+        if pasta.id == id {
+            index = i;
+            found = true;
+            break;
+        }
+    }
+
+    if found {
         if pastas[index].encrypt_server && password == *"" {
             return Ok(HttpResponse::Found()
                 .append_header((
                     "Location",
-                    format!("/auth/{}", slug),
+                    format!("{}/auth/{}", ARGS.public_path_as_str(), pastas[index].id_as_animals()),
                 ))
                 .finish());
         }
@@ -311,7 +405,7 @@ pub async fn postrawpasta(
                 return Ok(HttpResponse::Found()
                     .append_header((
                         "Location",
-                        format!("/auth/{}/incorrect", slug),
+                        format!("{}/auth/{}/incorrect", ARGS.public_path_as_str(), pastas[index].id_as_animals()),
                     ))
                     .finish());
             }
@@ -333,8 +427,8 @@ pub async fn postrawpasta(
         update(Some(&pastas), Some(&pastas[index]));
 
         // send raw content of pasta
-        let response = Ok(HttpResponse::NotFound()
-            .content_type("text/html")
+        let response = Ok(HttpResponse::Ok()
+            .content_type("text/plain; charset=utf-8")
             .body(pastas[index].content.to_owned()));
 
         if pastas[index].content != original_content {
@@ -346,7 +440,7 @@ pub async fn postrawpasta(
 
     // otherwise send pasta not found error as raw text
     Ok(HttpResponse::NotFound()
-        .content_type("text/html")
+        .content_type("text/html; charset=utf-8")
         .body(String::from("Upload not found! :-(")))
 }
 

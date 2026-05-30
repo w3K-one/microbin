@@ -41,13 +41,13 @@ pub async fn get_admin(
 
     pastas.sort_by(|a, b| b.created.cmp(&a.created));
 
-    let status = if ARGS.auth_admin_username == "admin" && ARGS.auth_admin_password == "m1cr0b1n" {
+    let status = if *ARGS.auth_admin_username == "admin" && *ARGS.auth_admin_password == "m1cr0b1n" {
         "WARNING"
     } else {
         "OK"
     };
 
-    let message = if ARGS.auth_admin_username == "admin" && ARGS.auth_admin_password == "m1cr0b1n" {
+    let message = if *ARGS.auth_admin_username == "admin" && *ARGS.auth_admin_password == "m1cr0b1n" {
         "Warning: You are using the default admin credentials. This is a security risk."
     } else if ARGS.public_path.is_none() {
         "Warning: No public URL set. QR code and URL copying are disabled."
@@ -89,7 +89,7 @@ pub async fn post_admin(
         }
     }
 
-    if username != ARGS.auth_admin_username || password != ARGS.auth_admin_password {
+    if username != *ARGS.auth_admin_username || password != *ARGS.auth_admin_password {
         return Ok(HttpResponse::Found()
             .append_header(("Location", "/@/auth/incorrect"))
             .finish());

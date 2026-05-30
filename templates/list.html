@@ -51,7 +51,11 @@
                         {% if pasta.content != "" && !pasta.expired %}
                         <a style="margin-right:1rem" href="{{ args.public_path_as_str()}}/raw/{{pasta.slug()}}">Text</a>
                         {%- endif %}
-                        {% if pasta.file.is_some() && !pasta.expired %}
+                        {% if pasta.attachments.is_some() && !pasta.expired %}
+                        <a style="margin-right:1rem" href="{{ args.public_path_as_str() }}/upload/{{pasta.slug()}}">
+                            {{ 1 + pasta.attachments.as_ref().unwrap().len() }} Files
+                        </a>
+                        {%- else if pasta.file.is_some() && !pasta.expired %}
                         <a style="margin-right:1rem" href="{{ args.public_path_as_str() }}/file/{{pasta.slug()}}">
                             {% if pasta.file.as_ref().unwrap().is_image() %}Image
                             {%- else if pasta.file.as_ref().unwrap().is_video() %}Video

@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -14,16 +15,18 @@ pub struct Version {
     pub update_type: Cow<'static, str>,
 }
 
-pub static CURRENT_VERSION: Version = Version {
-    major: 2,
-    minor: 1,
-    patch: 3,
-    title: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
-    long_title: Cow::Borrowed(concat!("Version ", env!("CARGO_PKG_VERSION"))),
-    description: Cow::Borrowed("w3K fork: custom URL slugs, HTML/Markdown inline rendering, CSP hardening, native ARM builds."),
-    date: Cow::Borrowed("2026-05-30"),
-    update_type: Cow::Borrowed("stable"),
-};
+lazy_static! {
+    pub static ref CURRENT_VERSION: Version = Version {
+        major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
+        minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
+        patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
+        title: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
+        long_title: Cow::Owned(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+        description: Cow::Borrowed(""),
+        date: Cow::Borrowed(""),
+        update_type: Cow::Borrowed("stable"),
+    };
+}
 
 impl Version {
     pub fn newer_than(&self, other: &Version) -> bool {
