@@ -107,7 +107,7 @@ pub async fn post_secure_file(
                         };
                         return Ok(HttpResponse::Ok()
                             .content_type("text/html; charset=utf-8")
-                            .insert_header(("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'"))
+                            .insert_header(("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"))
                             .insert_header(("X-Content-Type-Options", "nosniff"))
                             .body(body));
                     }
@@ -185,7 +185,7 @@ pub async fn get_file(
                 let html_content = std::fs::read_to_string(&file_path)?;
                 return Ok(HttpResponse::Ok()
                     .content_type("text/html; charset=utf-8")
-                    .insert_header(("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'"))
+                    .insert_header(("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"))
                     .insert_header(("X-Content-Type-Options", "nosniff"))
                     .body(inject_back_button(&html_content)));
             }
@@ -193,7 +193,7 @@ pub async fn get_file(
                 let md_content = std::fs::read_to_string(&file_path)?;
                 return Ok(HttpResponse::Ok()
                     .content_type("text/html; charset=utf-8")
-                    .insert_header(("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'"))
+                    .insert_header(("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"))
                     .insert_header(("X-Content-Type-Options", "nosniff"))
                     .body(render_markdown(&md_content)));
             }
