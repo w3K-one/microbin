@@ -33,11 +33,22 @@ fn pastaresponse(
 
     // find the pasta by slug (custom URL or generated ID)
     if let Some(index) = find_pasta_by_slug(&pastas, &slug) {
+        // Non-encrypted HTML file pastas: redirect directly to inline view
+        if password.is_empty() && !pastas[index].encrypt_server && !pastas[index].encrypt_client {
+            if let Some(ref file) = pastas[index].file {
+                if file.is_html() {
+                    return HttpResponse::Found()
+                        .append_header(("Location", format!("/file/{}", slug)))
+                        .finish();
+                }
+            }
+        }
+
         if pastas[index].encrypt_server && password == *"" {
             return HttpResponse::Found()
                 .append_header((
                     "Location",
-                    format!("/auth/{}", pastas[index].id_as_animals()),
+                    format!("/auth/{}", slug),
                 ))
                 .finish();
         }
@@ -61,7 +72,7 @@ fn pastaresponse(
                 return HttpResponse::Found()
                     .append_header((
                         "Location",
-                        format!("/auth/{}/incorrect", pastas[index].id_as_animals()),
+                        format!("/auth/{}/incorrect", slug),
                     ))
                     .finish();
             }
@@ -217,7 +228,7 @@ pub async fn getrawpasta(
             return Ok(HttpResponse::Found()
                 .append_header((
                     "Location",
-                    format!("/auth_raw/{}", pastas[index].id_as_animals()),
+                    format!("/auth_raw/{}", slug),
                 ))
                 .finish());
         }
@@ -276,7 +287,7 @@ pub async fn postrawpasta(
             return Ok(HttpResponse::Found()
                 .append_header((
                     "Location",
-                    format!("/auth/{}", pastas[index].id_as_animals()),
+                    format!("/auth/{}", slug),
                 ))
                 .finish());
         }
@@ -300,7 +311,7 @@ pub async fn postrawpasta(
                 return Ok(HttpResponse::Found()
                     .append_header((
                         "Location",
-                        format!("/auth/{}/incorrect", pastas[index].id_as_animals()),
+                        format!("/auth/{}/incorrect", slug),
                     ))
                     .finish());
             }

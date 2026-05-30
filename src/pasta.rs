@@ -48,6 +48,11 @@ impl PastaFile {
         extensions.iter().any(|&ext| lowercase_name.ends_with(ext))
     }
 
+    pub fn is_html(&self) -> bool {
+        let lowercase_name = self.name.to_lowercase();
+        lowercase_name.ends_with(".html") || lowercase_name.ends_with(".htm")
+    }
+
     pub fn embeddable(&self) -> bool {
         self.is_image() || self.is_video()
     }
@@ -81,6 +86,12 @@ impl Pasta {
         } else {
             to_animal_names(self.id)
         }
+    }
+
+    /// Returns the custom URL slug if set, otherwise the generated animal/hash ID.
+    /// Use this for building redirect URLs so custom URLs are preserved.
+    pub fn slug(&self) -> String {
+        self.custom_url.clone().unwrap_or_else(|| self.id_as_animals())
     }
 
     pub fn has_file(&self) -> bool {

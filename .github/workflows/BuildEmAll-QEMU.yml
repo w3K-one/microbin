@@ -1,16 +1,7 @@
-name: Docker Multi-Platform Build, Push & Release (Native ARM)
+name: Docker Multi-Platform Build, Push & Release (QEMU fallback)
 
 on:
-  push:
-    branches: [ "master", "main" ]
-    paths:
-      - 'src/**'
-      - 'templates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'Dockerfile'
-      - '.dockerignore'
-
+  # QEMU fallback — manual trigger only. Use BuildEmAll.yml (native ARM) for normal releases.
   workflow_dispatch:
 
 env:
@@ -35,6 +26,7 @@ jobs:
           LATEST_COMMIT_MSG=$(git log -1 --pretty=%B)
 
           # 1. Try to get version from commit message (e.g., "v1.2.3 Something something")
+          # The '|| true' ensures that if grep finds nothing, it doesn't cause the script to exit with an error.
           COMMIT_MSG_VERSION=$(echo "$LATEST_COMMIT_MSG" | grep -oP '^v[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
 
           if [[ -n "$COMMIT_MSG_VERSION" ]]; then
@@ -42,12 +34,12 @@ jobs:
             echo "TAG=$COMMIT_MSG_VERSION" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
+          
           echo "No version found in commit message. Checking for existing Git tags."
-
+          
           # 2. If no version in commit, get the latest git tag
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
-
+          
           if [[ -n "$LATEST_TAG" ]]; then
             echo "Found latest tag: $LATEST_TAG"
             # Increment the patch version of the tag (e.g., v1.2.3 -> v1.2.4 or v1.2 -> v1.3)
@@ -61,25 +53,22 @@ jobs:
             echo "TAG=$DATE_TAG" >> "$GITHUB_OUTPUT"
           fi
 
-  # Build each platform natively in parallel — each job runs on its target hardware
-  build:
+  # Build each platform in parallel
+  Build-Em-All:
     needs: version
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            arch: amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm   # Native GitHub-hosted ARM64 runner
-            # To use a self-hosted Oracle/Hetzner runner instead:
-            # runner: [self-hosted, linux, arm64]
-            arch: arm64
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -90,13 +79,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract platform info
+      - name: Extract platform pair
         id: platform
         run: |
           PLATFORM_PAIR="${{ matrix.platform }}"
           PLATFORM_TAG="${PLATFORM_PAIR//\//-}"
           echo "tag=${PLATFORM_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Building $PLATFORM_PAIR natively on $(uname -m)"
 
       - name: Build and push by digest
         id: build
@@ -123,9 +111,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Merge platform digests into a single multi-arch manifest and push
+  # Merge platform images into multi-arch manifest
   merge:
-    needs: [version, build]
+    needs: [version, Build-Em-All]
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
@@ -156,7 +144,7 @@ jobs:
         run: |
           docker buildx imagetools inspect ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.version.outputs.tag }}
 
-  # Create GitHub release and update Docker Hub description
+  # Create GitHub release
   release:
     needs: [version, merge]
     runs-on: ubuntu-latest
@@ -165,44 +153,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Write release body
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-          IMAGE_TAG: ${{ needs.version.outputs.tag }}
-          IMAGE_NAME: ${{ env.DOCKER_IMAGE_NAME }}
-        run: |
-          cat > /tmp/release-body.md << 'BODY_EOF'
-          ## Docker Image
-          ```bash
-          docker pull $IMAGE_NAME:$IMAGE_TAG
-          ```
-
-          **Supported Platforms:**
-          - `linux/amd64` — Intel/AMD 64-bit
-          - `linux/arm64` — ARM 64-bit (Raspberry Pi 4+, Apple Silicon, AWS Graviton, Oracle Cloud)
-
-          ## Quick Start
-          ```bash
-          docker run -d -p 8080:8080 \
-            -e MICROBIN_PUBLIC_PATH=https://paste.example.com \
-            -v microbin-data:/app/microbin_data \
-            --name microbin \
-            $IMAGE_NAME:$IMAGE_TAG
-          ```
-
-          ## Changes
-          BODY_EOF
-          printf '%s\n' "$COMMIT_MSG" >> /tmp/release-body.md
-          echo "" >> /tmp/release-body.md
-          echo "---" >> /tmp/release-body.md
-          echo "Built natively on amd64 and arm64 hardware — no QEMU emulation." >> /tmp/release-body.md
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: Release ${{ needs.version.outputs.tag }}
-          body_path: /tmp/release-body.md
+          body: |
+            Built via QEMU fallback workflow (manual trigger).
+
+            ```bash
+            docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.version.outputs.tag }}
+            ```
           draft: false
           prerelease: false
 
